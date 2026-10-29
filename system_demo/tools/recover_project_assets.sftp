@@ -1,0 +1,12 @@
+get -a G:/OrangePi/Yolo_clip/models/clip_image_encoder_vitl14.onnx F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/clip_image_encoder_vitl14.onnx.partial
+get G:/OrangePi/Yolo_clip/outputs/train_single_class/yolo11n_waste_single_class2/weights/best.onnx F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/best.onnx
+get G:/OrangePi/Yolo_clip/outputs/train_single_class/yolo11n_waste_single_class2/weights/best.pt F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/best.pt
+get G:/OrangePi/Yolo_clip/outputs/train_single_class/yolo11n_waste_single_class2/args.yaml F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/args.yaml
+get G:/OrangePi/Yolo_clip/outputs/train_single_class/yolo11n_waste_single_class2/results.csv F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/results.csv
+get G:/OrangePi/Yolo_clip/configs/app.yaml F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/app.yaml
+get G:/OrangePi/Yolo_clip/src/rknn_utils.py F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/rknn_utils.py
+get G:/OrangePi/Yolo_clip/src/pipeline/inference.py F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/original_inference.py
+get G:/OrangePi/Yolo_clip/src/clip_classifier/hf_clip.py F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/hf_clip.py
+get G:/OrangePi/Yolo_clip/src/clip_classifier/export.py F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/original_clip_export.py
+get D:/YOLO-CLIP-QAT-20261010/real_eval_200_20261011/yolo_float_contract.json F:/YOLO-CLIP/system_demo/quantization/artifacts/recovered_project_20261011/yolo_float_contract.json
+bye
