@@ -1,3 +1,6 @@
+// 宿主图像预处理和 DMA RGB 张量打包。模型输入顺序均为 RGB、NHWC、FP16。
+// 文件输入的 RGA 虚拟地址辅助函数可回退 OpenCV；摄像头 FD 路径由 camera_dma::Preprocessor 实现。
+
 #pragma once
 #include "types.hpp"
 #include "utils.hpp"
@@ -6,6 +9,7 @@
 
 namespace yolo_clip {
 
+// CPU 基线显式复制 raw 帧后由 OpenCV 转色，这笔复制单独记入 CopyMetrics。
 class CameraCpuPreprocessor {
  public:
   cv::Mat Convert(const camera_dma::Frame& frame, double& elapsed_ms) {
@@ -37,6 +41,7 @@ class CameraCpuPreprocessor {
   cv::Mat bgr_;
 };
 
+// ROI 的 cv::Mat 可能不连续；先得到连续缓冲后才按紧凑图像包装 RGA 虚拟地址。
 inline bool ResizeWithRga(const cv::Mat& src, cv::Mat& dst) {
   if (src.empty() || dst.empty()) {
     return false;
@@ -85,6 +90,7 @@ inline bool ConvertColorWithRga(const cv::Mat& src, cv::Mat& dst, int src_format
   return true;
 }
 
+// RGA 写完 RGB 后，CPU 在同步读作用域中归一化；输出地址可直接指向 RKNN 导入的 DMA。
 inline void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool clip,
                         normalization::Mode mode = normalization::Mode::Scalar) {
   camera_dma::CpuAccess read(rgb.Buffer(), DMA_BUF_SYNC_READ);
@@ -95,6 +101,7 @@ inline void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool cl
   read.Finish();
 }
 
+// 沿用本项目部署契约：直接 resize 到 224×224，不是官方 CLIP 常见的中心裁剪。
 class ClipPreprocessor {
  public:
   explicit ClipPreprocessor(bool use_rga, normalization::Mode mode = normalization::Mode::Scalar)
@@ -126,6 +133,7 @@ class ClipPreprocessor {
     }
 
     auto* dst = reinterpret_cast<uint16_t*>(dst_bytes);
+    // 归一化直接写目标张量；按源 step 读行，输出无行 padding。
     normalization::Run(rgb_.data, 224, 224, rgb_.step, dst, true, mode_);
     copy_metrics.Normalized(InputBytes());
     preprocess_ms =

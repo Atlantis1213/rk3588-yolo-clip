@@ -1,3 +1,6 @@
+// Linux DMA-BUF 与 RGA 的资源封装。FD 用于设备共享，mmap 地址用于 CPU 访问。
+// 共享同一物理缓冲不等于无需缓存同步；CPU 读写必须显式使用 CpuAccess。
+
 #pragma once
 #include <atomic>
 #include <algorithm>
@@ -22,6 +25,7 @@
 
 
 namespace camera_dma {
+// 系统调用被信号中断（EINTR）时重试，其他错误交给调用方判断。
 inline int Ioctl(int fd, unsigned long request, void* arg) {
   int ret;
   do { ret = ioctl(fd, request, arg); } while (ret < 0 && errno == EINTR);
@@ -32,6 +36,7 @@ inline void Check(bool ok, const std::string& operation) {
   if (!ok) throw std::runtime_error(operation + ": " + std::strerror(errno));
 }
 
+// 独占管理一个 DMA heap 分配和映射；禁止复制，防止重复 close/munmap。
 class DmaBuffer {
  public:
   DmaBuffer(const std::string& heap, size_t bytes) : size_(bytes) {
@@ -41,6 +46,7 @@ class DmaBuffer {
     allocation.len = bytes;
     allocation.fd_flags = O_RDWR | O_CLOEXEC;
     const int ret = Ioctl(heap_fd, DMA_HEAP_IOCTL_ALLOC, &allocation);
+    // 关闭临时 heap FD 可能改变 errno，先保存分配调用的错误以便准确报告。
     const int saved_errno = errno;
     close(heap_fd);
     errno = saved_errno;
@@ -74,6 +80,8 @@ class DmaBuffer {
 };
 
 // Scope device/CPU ownership explicitly, including cache synchronization.
+// 作用域内声明 CPU 的读/写方向。正常路径 Finish 可抛出同步错误，
+// 析构只做兜底收尾并吞掉异常，避免栈展开时二次抛错。
 class CpuAccess {
  public:
   CpuAccess(const CpuAccess&) = delete;
@@ -97,6 +105,8 @@ class CpuAccess {
   bool active_ = true;
 };
 
+// 在 DMA 缓冲上注册 RGA 图像；stride 以像素为单位按 16 对齐，RowBytes 转为字节。
+// 逻辑宽度与物理行宽不同，CPU 归一化必须按 RowBytes 逐行读取。
 class DmaImage {
  public:
   DmaImage(const std::string& heap, int width, int height, int format)
@@ -126,6 +136,7 @@ inline void RgaCheck(IM_STATUS status, const char* operation) {
     throw std::runtime_error(std::string(operation) + ": " + imStrError(status));
 }
 
+// 同步 RGA 操作完成后才返回，调用者可据此决定何时释放输入 Frame。
 inline void Blit(rga_buffer_t src, rga_buffer_t dst, im_rect source, im_rect destination) {
   // Synchronous completion makes the capture buffer safe to requeue afterwards.
   RgaCheck(improcess(src, dst, {}, source, destination, {}, IM_SYNC), "RGA improcess");

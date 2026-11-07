@@ -1,3 +1,6 @@
+# 有限预算的 CLIP QAT/蒸馏实验：仅训练选定参数，以冻结教师保持特征方向与文本排名。
+# 代理训练结果必须再导出、转换并做板端验证，不能当成 RKNN 实测准确率。
+
 """Bounded LN/optional-projection QAT pilot; a training proxy, NOT RKNN validation."""
 import argparse
 import gc
@@ -30,6 +33,7 @@ def sha(path):
     return h.hexdigest()
 
 
+# 先写临时文件再原子替换，减少训练中断时状态 JSON 只写一半的风险。
 def write_json(path, value):
     temporary = path.with_suffix('.tmp')
     temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
@@ -43,6 +47,7 @@ def prepare_inputs(root):
     train_names = provenance['calibration_sources']
     val_names = [row['source'] for row in validation['samples']]
     test_names = [row['source'] for row in test['samples']]
+    # 从原始来源检查训练/验证/测试三者互斥，而不是仅比较生成文件名。
     sets = [set(train_names), set(val_names), set(test_names)]
     if any(len(s) != len(n) for s, n in zip(sets, [train_names,val_names,test_names])):
         raise RuntimeError('duplicate dataset members')
@@ -99,6 +104,7 @@ def metrics(model, inputs, teacher, text, labels, device):
             'teacher_top1_agreement':(prediction==(teacher@text.T).argmax(-1)).float().mean().item()}
 
 
+# 组合特征余弦、温度化文本分布 KL 和可选排名 margin；监督来自教师输出。
 def distillation_loss(prediction,target,text,kl_weight=.1,rank_weight=0.):
     cosine_loss = 1-(prediction*target).sum(-1).mean()
     student_logits,teacher_logits = prediction@text.T/.07,target@text.T/.07

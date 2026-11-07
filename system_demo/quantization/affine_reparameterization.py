@@ -1,3 +1,6 @@
+# LayerNorm → Linear 的等价参数折叠；此处矩阵方向为 [input,output]。
+# 目的在于改变中间激活分布以便量化，同时在浮点下保持整个组合的输出。
+
 """Same-operator LN-to-linear affine folds; matrix orientation is [input,output]."""
 import numpy as np
 
@@ -11,6 +14,7 @@ def validate(gamma, beta, weight, bias):
         raise ValueError("nonfinite original parameters")
 
 
+# LN 输出除以各通道 scales，Linear 对应输入行乘 scales，二者在矩阵乘法中抵消。
 def smooth_fold(gamma, beta, weight, bias, scales):
     validate(gamma, beta, weight, bias)
     scales = np.asarray(scales, np.float64)
@@ -30,6 +34,7 @@ def affine_fold(gamma, beta, weight, bias, channel_scale, channel_zero, common_s
         raise ValueError("invalid channel/common quantization parameters")
     if (channel_zero != np.rint(channel_zero)).any() or not np.isfinite(common_zero) or common_zero != round(common_zero):
         raise ValueError("zero points must be finite integers")
+    # ratio 改变通道尺度，shift 改变通道偏移；新的 Linear bias 需扣除 shift@W。
     ratio = channel_scale / common_scale
     shift = channel_scale * (channel_zero - common_zero)
     correction = shift @ weight.astype(np.float64)
@@ -37,6 +42,7 @@ def affine_fold(gamma, beta, weight, bias, channel_scale, channel_zero, common_s
         (weight * ratio[:, None]).astype(weight.dtype), (bias - correction).astype(bias.dtype))
 
 
+# 范围先包含零，再映射到 [-128,127]；最小 scale 防止常量通道出现除零。
 def channel_parameters(low, high):
     low = np.minimum(np.asarray(low, np.float64), 0.)
     high = np.maximum(np.asarray(high, np.float64), 0.)

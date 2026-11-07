@@ -1,3 +1,6 @@
+// 多线程统计与最终 JSON 报告。计数器用原子变量，累计值/样本集合由 accum_mutex 保护。
+// 完整分类吞吐、仅检测处理吞吐、单帧延迟属于不同指标，解读时需分别看分母。
+
 #pragma once
 #include "types.hpp"
 #include "utils.hpp"
@@ -71,6 +74,7 @@ struct Stats {
     clip_queue_wait_ms_sum += ms;
   }
 
+  // 只有完成 CLIP 和文本匹配的任务进入此统计；无目标而跳过的任务不算 completed。
   void AddCompleted(bool was_detected, double latency_ms, uint64_t checksum, int image_index,
                     const std::string& source_name, const ClassificationResult& cls) {
     completed.fetch_add(1);
@@ -85,6 +89,7 @@ struct Stats {
     latency_ms_min = std::min(latency_ms_min, latency_ms);
     latency_ms_max = std::max(latency_ms_max, latency_ms);
     checksum_xor ^= checksum;
+    // 每个 image_index 只保留首条样例；视频/摄像头都用 -1，所以这里只是样例，不是逐帧日志。
     if (sample_predictions.find(image_index) == sample_predictions.end()) {
       SamplePrediction pred;
       pred.image_index = image_index;
@@ -104,6 +109,7 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
                  double wall_ms) {
   const int completed = stats.completed.load();
   const int skipped_no_object = stats.skipped_no_object.load();
+  // processed 包括无目标而跳过 CLIP 的帧；completed_fps 才表示完整两模型链路的吞吐。
   const int processed = completed + skipped_no_object;
   const int yolo_runs = stats.yolo_runs.load();
   const int clip_runs = stats.clip_runs.load();
@@ -144,6 +150,7 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
     sample_predictions = stats.sample_predictions;
   }
 
+  // 调用方在 worker 全部 join 后打印；wall_ms 包含排空队列时间，不能用 1000/FPS 当单请求延迟。
   std::ostringstream oss;
   oss << std::fixed << std::setprecision(3);
   oss << "{\n";

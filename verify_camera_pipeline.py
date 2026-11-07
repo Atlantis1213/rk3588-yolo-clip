@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# 旧摄像头 demo 的板端集成验证：自检真实 RGA/DMA、比较宿主与 DMA 输入并检查失败退出。
+# 文件输入可验证模型链路，但不能代替 USB 摄像头的采集/EXPBUF/归还测试。
+
 """Board-side integration checks using real RGA and RKNN, without a USB camera."""
 import json
 import subprocess
@@ -25,6 +28,7 @@ def main():
               "--duration", "2", "--fps", "2.5", "--fallback-full-image"]
     pool = ["--images", "images", "--yolo-threads", "1", "--clip-threads", "1",
             "--clip-core-mode", "all"]
+    # 以低输入速率跑五帧，减少性能丢帧影响；之后按校验和与分类结果逐配置对照。
     baseline = json.loads(run(common + pool).stdout)
     if baseline["completed"] != 5:
         raise RuntimeError("baseline did not complete all five frames")
@@ -42,6 +46,7 @@ def main():
         if not report["zero_copy_input"]:
             raise RuntimeError("DMA input flag missing")
         print(f"PASS: {name}, all five outputs match host input exactly")
+    # 主动注入输入失败，验证生产者异常能唤醒并回收 worker，而不是挂起进程。
     failed = run(common + ["--video", "/nonexistent/camera_test.mp4",
                            "--yolo-threads", "1", "--clip-threads", "1"], success=False)
     if "failed to open video" not in failed.stderr:

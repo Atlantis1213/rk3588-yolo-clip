@@ -1,3 +1,6 @@
+# 仅用校准数据逐层重建 MLP down-projection：学习舍入，再估计均值偏置修正。
+# 固定 SDK 的 KL120 量化参数；这是受限 AdaRound 风格实验，非完整 BRECQ 或硬件精确 QAT。
+
 """Bounded CUDA AdaRound/bias pilot on calibration only; no held-out task tuning."""
 import argparse
 import gc
@@ -76,9 +79,11 @@ def main():
         gc.collect()
         model = model.cuda().requires_grad_(False)
         cache = [[] for _ in range(24)]
+        # 每图缓存 CLS token 与均匀采样的 15 个 patch token，控制 24 层缓存的内存量。
         token_ids = torch.tensor([0] + np.linspace(1, 256, 15, dtype=int).tolist(), device="cuda")
         hooks = []
         for index, block in enumerate(model.transformer.resblocks):
+            # 默认参数 index=index 固定当前层编号，避免 hook 闭包把所有层都写进最后一个缓存。
             def capture(module, inputs, value, index=index):
                 cache[index].append(value.detach().reshape(257, 4096)[token_ids].half().cpu())
             hooks.append(block.mlp.gelu.register_forward_hook(capture))
@@ -121,7 +126,9 @@ def main():
             for step in range(args.steps):
                 ids = torch.randperm(len(values), device="cuda")[:args.batch_tokens]
                 optimizer.zero_grad(set_to_none=True)
+                # 在量化输入上重建原浮点线性层输出，而不是只让权重自身逐元素误差最小。
                 reconstruction = F.mse_loss(F.linear(quantized_input[ids], rounding(), bias), target[ids])
+                # 前 20% 步数只拟合重建；之后逐步改变正则温度，推动软舍入趋向 0/1。
                 progress = max(0., (step / args.steps - .2) / .8)
                 temperature = 20 - 18 * progress
                 regularizer = 1 - (2 * (rounding.soft_targets() - .5).abs()).pow(temperature)
@@ -133,6 +140,7 @@ def main():
             with torch.no_grad():
                 hard = rounding(hard=True)
                 after = F.linear(quantized_input, hard, bias)
+                # 逐输出通道取残差均值作为 bias 修正，不改变权重形状或新增部署算子。
                 correction = (target - after).mean(0)
                 hard_error = F.mse_loss(after, target).item()
                 corrected_error = F.mse_loss(after + correction, target).item()

@@ -6,6 +6,9 @@
 
 主工程位于 [`system_demo/`](system_demo/README.md)。根目录保留早期摄像头实现与测试说明。
 
+初次阅读建议从[中文代码阅读路线](system_demo/docs/CODE_READING_GUIDE.md)开始，
+再结合源码中的中文注释理解数据流、线程协作、资源生命周期与量化实验。
+
 ## 数据路径与实现边界
 
 ```text

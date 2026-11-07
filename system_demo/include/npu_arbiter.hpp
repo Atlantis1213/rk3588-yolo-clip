@@ -1,3 +1,6 @@
+// 应用层 NPU 核准入控制：用 3 个 bit 表示 RK3588 的三个 NPU 核。
+// Permit 生命周期覆盖推理请求；互不相交的掩码可并行，占用冲突的请求需等待。
+
 #pragma once
 #include <condition_variable>
 #include <cstdint>
@@ -8,6 +11,7 @@ namespace yolo_clip {
 // Optional application admission control. It does not change kernel priorities.
 class NpuArbiter {
  public:
+  // Permit 不可复制；析构释放已占用核并唤醒等待者，异常路径也能归还配额。
   class Permit {
    public:
     Permit() = default;
@@ -29,15 +33,20 @@ class NpuArbiter {
     NpuArbiter* owner_ = nullptr;
     uint32_t mask_ = 0;
   };
+  // 启动 worker 前设置开关；此配置接口不支持运行中并发切换。
   void Enable(bool enabled) { enabled_ = enabled; }
+  // 固定核请求；关闭 gate 时返回空许可，AUTO 掩码保守地按三个核全部预留。
   Permit Acquire(uint32_t mask) {
     if (!enabled_) return {};
     if (!mask) mask = 7;  // AUTO may use any core; reserve all conservatively.
     std::unique_lock<std::mutex> lock(mutex_);
+    // 既要目标核空闲，也要没有等待中的自适应请求；后者优先取得可用核。
     cv_.wait(lock, [&] { return !(active_ & mask) && pending_any_ == 0; });
     active_ |= mask;
     return Permit(this, mask);
   }
+  // 调用方须已启用 per_core（由参数解析保证）；轮转寻找空闲核。
+  // 这是进程内准入，不是内核抢占调度，也不提供严格实时或 FIFO 保证。
   Permit AcquireAnyCore() {
     std::unique_lock<std::mutex> lock(mutex_);
     ++pending_any_;

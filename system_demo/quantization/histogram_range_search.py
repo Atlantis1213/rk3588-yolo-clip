@@ -1,3 +1,6 @@
+# 用校准激活直方图提出 INT8 范围候选：在截断误差与舍入误差之间取舍。
+# 这是直方图中心点的 QDQ 误差近似，不是融合 NPU 算子的逐位模拟，也不使用测试集标签。
+
 """Calibration-only affine INT8 range proposals, not bit-exact fused NPU QDQ."""
 import numpy as np
 
@@ -9,6 +12,7 @@ def histogram_values(counts, bounds):
             or not np.isfinite(bounds).all() or (counts < 0).any() or counts.sum() <= 0 or bounds[1] <= bounds[0]):
         raise ValueError("finite nonnegative nonempty histogram and increasing bounds required")
     step = (bounds[1] - bounds[0]) / len(counts)
+    # 以等宽 bin 中心代表该区间数值，counts 作为出现次数加权。
     return bounds[0] + (np.arange(len(counts)) + .5) * step, counts
 
 
@@ -28,6 +32,7 @@ def histogram_error(counts, bounds, parameters):
         raise ValueError("invalid INT8 scale/zero point")
     unbounded = np.rint(values / scale) + zero
     quantized = np.clip(unbounded, -128, 127)
+    # 饱和到 INT8 后反量化，与原 bin 中心的差同时包含 clipping 和 rounding 误差。
     difference = (quantized - zero) * scale - values
     return {"histogram_qdq_mse": float(np.sum(weights * difference ** 2) / weights.sum()),
         "clipping_fraction": float(weights[(unbounded < -128) | (unbounded > 127)].sum() / weights.sum()),
@@ -45,6 +50,7 @@ def percentile_upper(counts, bounds, percentile):
 def mse_search(counts, bounds, lower, upper, baseline):
     start = max(percentile_upper(counts, bounds, .99), 1e-6)
     end = max(float(upper), start)
+    # 保留原始范围作为候选，避免搜索结果比基线的校准 MSE 更差。
     candidates = [baseline] + [affine_parameters(lower, value) for value in np.linspace(start, end, 256)]
     # Also retain conventional percentile ranges, selected by calibration MSE only.
     candidates += [affine_parameters(lower, percentile_upper(counts, bounds, p)) for p in [.999, .9999, .99999]]

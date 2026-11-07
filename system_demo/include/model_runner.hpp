@@ -1,9 +1,13 @@
+// RKNN 执行封装：初始化/复制 context、输入绑定、NPU 准入、输出读取和模型后处理。
+// 每个 worker 独占 runner；输出缓存在下一次 Run 时被覆盖，分类须在此之前完成。
+
 #pragma once
 #include "preprocess.hpp"
 #include "npu_arbiter.hpp"
 
 namespace yolo_clip {
 
+// 这里选择 NPU 核，不是 CPU 线程亲和性；adaptive 的实际核在每次 RunRaw 前决定。
 inline rknn_core_mask YoloCoreMask(int worker_id, const std::string& mode = "legacy") {
   if (mode == "core0") return RKNN_NPU_CORE_0;
   if (mode == "core1") return RKNN_NPU_CORE_1;
@@ -40,6 +44,7 @@ inline rknn_core_mask ClipCoreMask(int worker_id, const std::string& mode) {
   }
 }
 
+// 公共资源按依赖顺序释放：先销毁导入内存和输入内存，最后销毁引用它们的 context。
 class BaseRunner {
  public:
   BaseRunner() = default;
@@ -68,6 +73,7 @@ class BaseRunner {
     PostInit(core_mask);
   }
 
+  // 复制执行上下文供其他 worker 使用，避免多个线程并发操作同一个 ctx_。
   void InitFromContext(rknn_context* root_ctx, rknn_core_mask core_mask) {
     int ret = rknn_dup_context(root_ctx, &ctx_);
     if (ret != RKNN_SUCC) {
@@ -85,12 +91,14 @@ class BaseRunner {
   }
   const rknn_tensor_attr& NativeInputAttr() const { return native_input_attr_; }
   double LastGateWaitMs() const { return last_gate_wait_ms_; }
+  // 逻辑张量字节数与 SDK 要求的物理分配大小可能不同；原生输入要满足 size_with_stride。
   size_t InputAllocationBytes(size_t packed_bytes) const {
     if (direct_heap_.empty()) return packed_bytes;
     if (native_input_attr_.n_elems * sizeof(uint16_t) != packed_bytes)
       throw std::runtime_error("direct input tensor size does not match model");
     return std::max(packed_bytes, static_cast<size_t>(native_input_attr_.size_with_stride));
   }
+  // 同一 context 按 FD 缓存导入结果；ImportedInput 同时持有 shared_ptr，防止 FD 提前关闭并复用。
   void RunDma(const std::shared_ptr<camera_dma::DmaBuffer>& buffer, double& run_ms) {
     auto found = imported_inputs_.find(buffer->Fd());
     if (found == imported_inputs_.end()) {
@@ -102,6 +110,7 @@ class BaseRunner {
       } catch (...) { rknn_destroy_mem(ctx_, mem); throw; }
     }
     rknn_tensor_attr attr = native_input_attr_;
+    // 原生绑定跳过 SDK 输入转换；因此调用方必须已经正确处理布局、数据类型和归一化。
     attr.pass_through = 1;
     const int ret = rknn_set_io_mem(ctx_, found->second.memory, &attr);
     if (ret != RKNN_SUCC)
@@ -123,6 +132,7 @@ class BaseRunner {
     if (ret != RKNN_SUCC) {
       throw std::runtime_error("query io num failed: " + std::to_string(ret));
     }
+    // 本封装的模型契约仅接受单输入/单输出，不能直接用于任意多输出 YOLO 导出。
     if (io_num.n_input != 1 || io_num.n_output != 1) {
       throw std::runtime_error("unexpected tensor count");
     }
@@ -148,6 +158,7 @@ class BaseRunner {
       native_input_attr_.index = 0;
       ret = rknn_query(ctx_, RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR, &native_input_attr_,
                        sizeof(native_input_attr_));
+      // 默认只接受经过验证的紧凑 FP16 NHWC；INT8 开关供工具诊断使用，不是默认部署输入。
       const bool type_supported = native_input_attr_.type == RKNN_TENSOR_FLOAT16 ||
           (allow_quantized_input_ && native_input_attr_.type == RKNN_TENSOR_INT8);
       if (ret != RKNN_SUCC || !type_supported ||
@@ -164,12 +175,14 @@ class BaseRunner {
     }
   }
 
+  // 统一三种输入路径：已绑定原生 DMA、复制到 SDK IO 内存、普通宿主输入提交。
   void RunRaw(const uint8_t* input_buf, uint32_t input_size, rknn_tensor_type type,
               rknn_tensor_format fmt, double& run_ms, bool already_bound = false) {
     int ret = RKNN_SUCC;
     if (already_bound) {
       // CPU normalization already wrote directly into the imported native tensor.
     } else if (use_io_mem_) {
+      // io-mem 仍有一次 CPU memcpy；直接写入导入的 DMA 张量才省去该复制。
       EnsureInputMem(input_size);
       std::memcpy(input_mem_->virt_addr, input_buf, input_size);
       copy_metrics.InputCopy(input_size);
@@ -192,13 +205,16 @@ class BaseRunner {
 
     rknn_output output;
     std::memset(&output, 0, sizeof(output));
+    // SDK 将输出转换为 float 写入预分配 vector，后处理不依赖模型内部量化类型。
     output.want_float = 1;
     output.is_prealloc = 1;
     output.index = 0;
     output.buf = output_float_.data();
     output.size = static_cast<uint32_t>(output_float_.size() * sizeof(float));
 
+    // run_ms 从准入等待前开始，到输出获取结束；gate_wait_ms 是其中的等待/动态核设置部分。
     auto start = Clock::now();
+    // 许可一直活到本次请求结束；即使 SDK 抛错，也会通过 RAII 释放占用核。
     auto permit = adaptive_core_ ? npu_arbiter.AcquireAnyCore() : npu_arbiter.Acquire(core_bits_);
     if (adaptive_core_) {
       const int change = rknn_set_core_mask(ctx_, static_cast<rknn_core_mask>(permit.Mask()));
@@ -264,6 +280,7 @@ class BaseRunner {
   std::shared_ptr<camera_dma::DmaBuffer> direct_input_;
 };
 
+// YOLO 预处理固定 640×640，后处理只取置信度最高的单个候选框。
 class YoloRunner : public BaseRunner {
  public:
   explicit YoloRunner(bool use_rga, normalization::Mode mode = normalization::Mode::Scalar)
@@ -312,6 +329,7 @@ class YoloRunner : public BaseRunner {
     result.run_ms = run_ms;
     result.gate_wait_ms = LastGateWaitMs();
     const float* out = output_float_.data();
+    // 约定输出为按通道展开的 [5,N]：cx、cy、w、h、confidence；这里没有多框 NMS。
     const int count = static_cast<int>(output_attr_.n_elems / 5);
     float best_conf = -1.0f;
     int best_idx = -1;
@@ -332,6 +350,7 @@ class YoloRunner : public BaseRunner {
     const float cy = out[1 * count + best_idx];
     const float w = out[2 * count + best_idx];
     const float h = out[3 * count + best_idx];
+    // 预处理左上角对齐、仅右/下补边，因此还原坐标只除 scale，不减居中 padding 偏移。
     const float x1 = std::max(0.0f, (cx - w * 0.5f) / letterbox_scale_);
     const float y1 = std::max(0.0f, (cy - h * 0.5f) / letterbox_scale_);
     const float x2 = std::min(static_cast<float>(width - 1), (cx + w * 0.5f) / letterbox_scale_);
@@ -359,6 +378,7 @@ class YoloRunner : public BaseRunner {
     if (canvas_.rows != side || canvas_.cols != side) {
       canvas_.create(side, side, CV_8UC3);
     }
+    // CPU letterbox 每帧填背景并复制原图；CopyMetrics 只统计显式的原图复制部分。
     canvas_.setTo(cv::Scalar(114, 114, 114));
     image_bgr.copyTo(canvas_(cv::Rect(0, 0, src_w, src_h)));
     copy_metrics.Letterbox(static_cast<size_t>(src_w) * src_h * 3);
@@ -403,6 +423,7 @@ class YoloRunner : public BaseRunner {
   std::vector<uint8_t> input_bytes_;
 };
 
+// CLIP runner 只运行图像塔并保留 embedding；离线文本特征匹配由 TextBank 完成。
 class ClipRunner : public BaseRunner {
  public:
   size_t InputBytes() const { return ClipPreprocessor::InputBytes(); }
@@ -419,6 +440,7 @@ class ClipRunner : public BaseRunner {
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
     return result;
   }
+  // 诊断入口：提交 float32 输入以比较 SDK 输入转换行为，常规流水线使用 FP16。
   ClipResult RunPreparedFloat32(const float* input) {
     ClipResult result;
     RunRaw(reinterpret_cast<const uint8_t*>(input), 224 * 224 * 3 * sizeof(float),

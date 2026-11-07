@@ -1,3 +1,6 @@
+// 离线 200 图评估的输入冻结：ROI 只计算一次，各 CLIP 候选读取完全相同的张量。
+// 空场景按协议跳过 YOLO 仍送 CLIP；非空漏检样本的整图只用于数值诊断。
+
 #include "pipeline.hpp"
 #include <filesystem>
 
@@ -18,6 +21,7 @@ int main(int argc, char** argv) {
     using namespace yolo_clip;
     cv::setNumThreads(1);
     const std::filesystem::path data(argv[2]), output(argv[3]);
+    // 拒绝覆盖冻结结果，防止不同候选实际上使用了不同 ROI 却被当成同输入比较。
     if (std::filesystem::exists(output)) throw std::runtime_error("output exists; never overwrite frozen crops");
     std::filesystem::create_directories(output / "inputs_fp16");
     std::filesystem::create_directories(output / "rois");
@@ -39,6 +43,7 @@ int main(int argc, char** argv) {
         throw std::runtime_error("sample must be a simple basename");
       const auto image = cv::imread((data / "images" / name).string());
       if (image.empty()) throw std::runtime_error("failed to read " + name);
+      // 这是使用已知 GT 标签的离线协议分支，不能当成在线系统已具备空场景判断能力。
       const bool skip = category == "empty";
       bool detected = false;
       double yolo_preprocess_ms = 0, yolo_run_ms = 0, clip_preprocess_ms = 0;

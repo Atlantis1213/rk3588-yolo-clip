@@ -1,8 +1,11 @@
+// CPU 线程亲和性与线程异常传播。CPU core_id 与 RKNN 的 NPU core mask 是两套概念。
+
 #pragma once
 #include "types.hpp"
 
 namespace yolo_clip {
 
+// 负数表示交给操作系统调度；亲和性是性能配置，不决定推理正确性。
 inline void PinThreadToCore(int core_id) {
   if (core_id < 0) {
     return;
@@ -31,6 +34,7 @@ inline int ClipWorkerCore(const Options& opt, int worker_id) {
   return -1;
 }
 
+// 线程函数不能直接把异常抛回创建线程；这里只保存首个异常并广播停止信号。
 class ThreadFailure {
  public:
   std::atomic<bool> stopped{false};
@@ -42,10 +46,12 @@ class ThreadFailure {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!error_) error_ = std::current_exception();
       }
+      // 停止标志配合关闭队列使用：仅设置标志无法唤醒正在条件变量上等待的线程。
       stopped.store(true);
       wake();
     }
   }
+  // 主线程在所有 worker join 后调用，此时 error_ 已不再被并发写入。
   void Rethrow() {
     if (error_) std::rethrow_exception(error_);
   }

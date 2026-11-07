@@ -1,3 +1,6 @@
+// 硬件主工程的公共依赖入口。可移植队列/缓冲池/归一化头文件刻意不依赖此文件。
+// Clock 使用单调时钟，性能计时不受系统时间校准影响。
+
 #pragma once
 #include <algorithm>
 #include <atomic>

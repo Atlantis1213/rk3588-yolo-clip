@@ -1,8 +1,11 @@
+// 通用数学与报告辅助；当前部署归一化使用 normalization.hpp 中的转换实现。
+
 #pragma once
 #include "common.hpp"
 
 namespace yolo_clip {
 
+// 按值接收后排序，不改变统计中的原始样本；使用 ceil 选取上侧顺序统计量。
 inline double Percentile(std::vector<double> samples, double percentile) {
   if (samples.empty()) {
     return 0.0;
@@ -12,6 +15,8 @@ inline double Percentile(std::vector<double> samples, double percentile) {
   return samples[index];
 }
 
+// 保留的历史 FP16 转换，舍入进位行为不同于 normalization::Float32ToFloat16。
+// 阅读当前输入归一化时应查看后者，勿将此辅助函数当作 IEEE 参考实现。
 inline uint16_t Float32ToFloat16(float value) {
   uint32_t bits;
   std::memcpy(&bits, &value, sizeof(bits));
@@ -33,6 +38,7 @@ inline uint16_t Float32ToFloat16(float value) {
                                ((mantissa + 0x00001000u) >> 13));
 }
 
+// 按 FP32 位模式滚动计算校验和，适合发现输出变化；不是准确率或密码学散列。
 inline uint64_t ChecksumFloat(const float* data, size_t count) {
   uint64_t sum = 0;
   for (size_t i = 0; i < count; ++i) {
@@ -51,6 +57,7 @@ inline float Dot(const float* a, const float* b, size_t count) {
   return sum;
 }
 
+// 给平方范数设置下限，避免接近零的向量归一化时直接除零。
 inline float L2Norm(const float* data, size_t count) {
   return std::sqrt(std::max(1e-12f, Dot(data, data, count)));
 }

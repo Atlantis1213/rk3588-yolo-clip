@@ -1,3 +1,6 @@
+# 验证公开校准集扩展：120 原始 + 120 新增，六类均衡，保持来源不交叉且文件哈希匹配。
+# 返回严格排序的 240 个路径，保证不同转换实验使用完全相同的输入清单。
+
 """Validate the existing public 240-image calibration expansion before conversion."""
 from collections import Counter
 import json
@@ -17,6 +20,7 @@ def expanded_calibration(root, original_paths, digest):
     counts = Counter(row["class"] for row in extra["samples"])
     if len(extra["classes"]) != 6 or counts != dict.fromkeys(extra["classes"], 20):
         raise ValueError("balanced extra public calibration required")
+    # 按原始来源去重，避免不同派生文件实际来自同一张验证/测试图片。
     excluded = set(record["excluded_previous_sources"])
     sources = [row["source"] for row in extra["samples"]]
     if len(set(sources)) != 120 or set(sources) & excluded:
@@ -30,6 +34,7 @@ def expanded_calibration(root, original_paths, digest):
             raise ValueError("extra calibration SHA mismatch")
         expected.append(path)
     paths = [Path(line) for line in (protocol / "calibration_augmented_240.txt").read_text().splitlines() if line]
+    # 不仅验证集合，还验证原始清单和新增清单的顺序，防止输入协议悄悄变化。
     if paths != list(original_paths) + expected or len(set(paths)) != 240:
         raise ValueError("expanded calibration order/membership differs")
     return paths

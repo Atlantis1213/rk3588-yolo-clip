@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# 板端回归：对照五张固定图片，比较串行/多上下文、宿主/DMA、scalar/LUT 的输出。
+# 当前 IEEE 路径对照当前 scalar，legacy 路径对照历史程序；不能混用两个舍入参考。
+
 """Check refactor/LUT/native input against the original five-image model outputs."""
 import json
 from pathlib import Path
@@ -31,6 +34,7 @@ for name, options in [
 ]:
     configuration = ["--yolo-threads", "1", "--clip-threads", "1", "--clip-core-mode", "all"] + options
     actual = report("./build/yolo_clip_system_demo", configuration)
+    # 两套参考按是否为 legacy 配置分开，避免把修正历史舍入差异误报为 LUT 回归。
     expected = legacy_baseline if name.startswith("legacy_") else baseline
     for key in ("completed", "detected", "checksum_xor", "sample_predictions"):
         if actual[key] != expected[key]: raise RuntimeError(f"{name}: mismatch in {key}")

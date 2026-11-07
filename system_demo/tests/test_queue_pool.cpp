@@ -1,3 +1,5 @@
+// 不依赖硬件的队列/缓冲池测试：关注关闭、丢弃、异常时槽位是否完整归还。
+
 #include "buffer_pool.hpp"
 #include "pipeline_queue.hpp"
 #include <atomic>
@@ -9,6 +11,7 @@ using Pool = yolo_clip::BufferPool<int>;
 using Queue = yolo_clip::DropOldestQueue<Pool::Lease>;
 void Check(bool ok, const char* description) { if (!ok) throw std::runtime_error(description); }
 
+// 重点回归：Push 被关闭队列拒绝时，传入租约也必须析构归还，不能只依赖 on_drop。
 __attribute__((noinline)) void TestClosedQueueOwnership() {
   Pool pool(std::vector<int>(1)); Queue queue(1); queue.Close();
   auto lease = pool.TryAcquire();
@@ -68,10 +71,12 @@ int main() {
       queue.Close();
       for (auto& thread : consumers) thread.join();
     }
+    // 并发对账要求每个被接受任务最终恰好属于消费或丢弃，并在退出时收回全部槽。
     Check(accepted == 4000 && consumed + dropped == accepted, "concurrent task accounting mismatch");
     Check(pool.FreeCount() == 16, "concurrent slots not all returned");
   }
   {
+    // 验证租约可比池包装对象存活更久，内部 shared State 没有悬空。
     Pool::Lease survivor;
     { Pool pool(std::vector<int>{42}); survivor = pool.TryAcquire(); }
     Check(survivor.Get() == 42, "lease failed to retain pool lifetime");

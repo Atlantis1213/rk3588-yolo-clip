@@ -1,3 +1,6 @@
+// 故意保留的历史所有权泄漏复现程序；预期以非零状态退出，不属于应通过的 CTest。
+// 关闭队列直接返回，不调用 on_drop；只传整数槽号时，手动归还责任因此丢失。
+
 #include <condition_variable>
 #include <mutex>
 #include <queue>

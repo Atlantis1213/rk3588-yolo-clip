@@ -1,3 +1,6 @@
+// 早期单文件版本的 Linux 摄像头 DMA/RGA 实现，供根目录历史 benchmark 使用。
+// 当前主工程已拆分到 system_demo/include/，阅读和后续维护优先从该目录开始。
+
 #pragma once
 
 // Linux-only V4L2 capture and DMA-BUF/RGA helpers. No FFmpeg is used here.
@@ -34,6 +37,7 @@ inline void Check(bool ok, const std::string& operation) {
   if (!ok) throw std::runtime_error(operation + ": " + std::strerror(errno));
 }
 
+// 独占 DMA heap FD 和 CPU 映射，析构按顺序解除映射、关闭 FD，避免句柄泄漏。
 class DmaBuffer {
  public:
   DmaBuffer(const std::string& heap, size_t bytes) : size_(bytes) {
@@ -76,6 +80,7 @@ class DmaBuffer {
 };
 
 // Scope device/CPU ownership explicitly, including cache synchronization.
+// CPU 缓存同步的作用域：START 获取访问权，END 结束访问；DMA 共享不能省略同步。
 class CpuAccess {
  public:
   CpuAccess(const DmaBuffer& buffer, uint64_t direction)
@@ -97,6 +102,7 @@ class CpuAccess {
   bool active_ = true;
 };
 
+// 把 DMA 内存导入 RGA，逻辑宽度与按 16 对齐的物理 stride 分开记录。
 class DmaImage {
  public:
   DmaImage(const std::string& heap, int width, int height, int format)
@@ -132,6 +138,7 @@ inline void Blit(rga_buffer_t src, rga_buffer_t dst, im_rect source, im_rect des
 }
 
 class V4l2Capture;
+// 摄像头缓冲的生命周期凭证；最后一个引用销毁时重新入队，驱动才可覆写像素。
 struct Frame {
   std::shared_ptr<V4l2Capture> owner;
   unsigned int index = 0;
@@ -140,6 +147,7 @@ struct Frame {
   ~Frame();
 };
 
+// 初始化协商格式并导出缓冲；运行中 Acquire 出队，Frame 析构归还。
 class V4l2Capture : public std::enable_shared_from_this<V4l2Capture> {
  public:
   static std::shared_ptr<V4l2Capture> Open(const std::string& device, int width,
@@ -316,6 +324,7 @@ class V4l2Capture : public std::enable_shared_from_this<V4l2Capture> {
 inline Frame::~Frame() { if (owner) owner->Requeue(index); }
 
 // One instance per YOLO worker; all images are imported once and reused.
+// 复用整图/方形/ROI 缓冲；YOLO 左上角对齐补边，CLIP 直接将 ROI 缩放到 224。
 class Preprocessor {
  public:
   explicit Preprocessor(std::string heap) : heap_(std::move(heap)) {}

@@ -1,3 +1,6 @@
+# 严格完整数据集评估：标签、文本特征、模型输出按同一类别顺序配对。
+# 同时计算任务准确率、macro-F1、embedding 偏差及相对于 FP16 的配对得失。
+
 """Strict complete-split task metrics and paired preservation against FP16."""
 import argparse
 import json
@@ -14,6 +17,7 @@ def load_dump(directory, labels, texts):
         raise ValueError("duplicate label images")
     manifest = json.loads((directory / "manifest.json").read_text())
     names = [row["image"] for row in manifest["samples"]]
+    # 不允许漏样本、重复样本或额外样本，防止仅在成功子集上报告过高准确率。
     if len(set(names)) != len(names) or set(names) != set(truth):
         raise ValueError("dump does not contain the complete split exactly once")
     dim = manifest["embedding_dim"]
@@ -31,6 +35,7 @@ def load_dump(directory, labels, texts):
     prediction = scores.argmax(axis=1)
     actual = np.array([truth[name] for name in names])
     confusion = np.zeros((len(classes), len(classes)), np.int64)
+    # 混淆矩阵行是真实类别、列是预测类别；macro-F1 让每类等权。
     np.add.at(confusion, (actual, prediction), 1)
     diagonal = confusion.diagonal()
     precision = np.divide(diagonal, confusion.sum(0), out=np.zeros(len(classes)), where=confusion.sum(0) != 0)
@@ -45,6 +50,7 @@ def load_dump(directory, labels, texts):
 
 def compare(base, candidate):
     names, truth, prediction, values, normalized, scores, stats = candidate
+    # 矩阵逐行比较前要求文件顺序一致，不能仅验证集合相同。
     if names != base[0]:
         raise ValueError("paired dump sample order mismatch")
     cosine = (base[4] * normalized).sum(1)
@@ -52,6 +58,7 @@ def compare(base, candidate):
     right = truth == prediction
     wins = int((right & ~base_right).sum())
     losses = int((~right & base_right).sum())
+    # McNemar 精确检验只统计基线和候选一对一的胜/负样本，观察改进是否有配对证据。
     discordant = wins + losses
     p_value = min(1., 2 * sum(math.comb(discordant, index) for index in range(min(wins, losses) + 1))
         / 2 ** discordant) if discordant else 1.

@@ -1,3 +1,6 @@
+// 输入读取辅助：模型二进制、按文件名排序的图片集合，以及多后端视频打开。
+// 图片模式启动时预加载到内存，避免把每帧磁盘解码混入推理性能比较。
+
 #pragma once
 #include "utils.hpp"
 
@@ -40,6 +43,7 @@ inline std::vector<std::string> LoadImagePaths(const std::string& dir) {
     }
   }
   closedir(handle);
+  // 固定文件次序，使生产者 image_index、报告样例和重复运行更容易对应。
   std::sort(paths.begin(), paths.end());
   return paths;
 }
@@ -59,6 +63,7 @@ inline std::vector<cv::Mat> LoadImages(const std::string& dir) {
   return images;
 }
 
+// 依次尝试 FFmpeg、GStreamer 与默认后端；摄像头 raw DMA 路径不经过本函数。
 inline cv::VideoCapture OpenVideo(const std::string& path) {
   cv::VideoCapture cap;
   cap.open(path, cv::CAP_FFMPEG);

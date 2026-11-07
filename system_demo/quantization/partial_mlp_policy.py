@@ -1,3 +1,6 @@
+# 部分 MLP 混合精度策略：24 层分为早/中/晚三个等大的 8 层组，仅保护选中组的降维矩阵。
+# 除生成策略外，还读取实际 SDK inventory 核实最终精度和执行设备。
+
 """Fixed, equal-sized layer groups and strict checks of actual matrix precision."""
 import re
 
@@ -31,6 +34,7 @@ def select_down_tensors(layers, blocks):
             if index in indexed:
                 raise ValueError("duplicate down-projection tensor for block " + str(index))
             indexed[index] = row["tensor"]
+    # 要求完整映射 24 层再选择子集，避免导出图改名导致部分策略静默失效。
     if set(indexed) != set(range(24)):
         raise ValueError("expected exactly 24 complete down-projection block mappings")
     return [indexed[index] for index in selected]
@@ -62,6 +66,7 @@ def verify_partial_down_inventory(report, blocks):
         if set(actual) != set(range(24)):
             raise ValueError("actual matrix block coverage incomplete: " + group)
         for index, precision in actual.items():
+            # 只有所选 down-projection 为 FP16/NPU；其余 up、QKV、attention projection 必须仍为 INT8/NPU。
             expected = ("FLOAT16", "NPU") if group == "down" and index in selected else ("INT8", "NPU")
             if precision != expected:
                 raise ValueError(f"actual {group} block {index}: {precision}, expected {expected}")

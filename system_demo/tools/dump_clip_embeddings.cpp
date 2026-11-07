@@ -1,3 +1,6 @@
+// 导出固定输入 FP16 位模式、FP32 embedding 和样本 manifest，供跨后端数值对照。
+// 可选择整图或 YOLO ROI；这是串行诊断工具，其耗时不代表多上下文聚合吞吐。
+
 #include "pipeline.hpp"
 #include <filesystem>
 
@@ -37,6 +40,7 @@ int main(int argc, char** argv) {
       if (yolo) { double ms; roi = yolo->Run(image, 0.05f, ms).roi; }
       double preprocessing_ms;
       preprocessor.PrepareInput(image(roi), input.data(), preprocessing_ms);
+      // FP32 对照来自已经舍入的同一 FP16 张量，而非重新生成更高精度输入，便于隔离 SDK 行为。
       if (fp32) {
         const auto* half = reinterpret_cast<const uint16_t*>(input.data());
         for (size_t k = 0; k < input_f32.size(); ++k) input_f32[k] = normalization::Float16ToFloat32(half[k]);
@@ -46,6 +50,7 @@ int main(int argc, char** argv) {
       tensor.write(reinterpret_cast<const char*>(input.data()), input.size());
       if (dma || native_int8) {
         camera_dma::CpuAccess write(*buffer, DMA_BUF_SYNC_WRITE);
+        // 实验分支按模型原生 scale/zero_point 量化并饱和到 INT8；此路径不等于默认 FP16 部署。
         if (native_int8) {
           const auto& attr = clip.NativeInputAttr();
           const auto* half = reinterpret_cast<const uint16_t*>(input.data());
@@ -58,6 +63,7 @@ int main(int argc, char** argv) {
         } else std::memcpy(buffer->Data(), input.data(), input.size());
         write.Finish();
       }
+      // 每个样本先预热一次，再导出后一次执行的 embedding 和耗时。
       for (int warm = 0; warm < 1; ++warm) {
         if (dma || native_int8) clip.RunPreparedDma(buffer);
         else if (fp32) clip.RunPreparedFloat32(input_f32.data());

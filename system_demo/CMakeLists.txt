@@ -1,3 +1,6 @@
+# 构建分两层：硬件 demo 需要 RKNN/RGA/OpenCV，portable tests 只需要 C++17 和线程库。
+# 阅读代码时可先关闭 BUILD_HARDWARE_DEMO，单独运行队列、缓冲池和归一化测试。
+
 cmake_minimum_required(VERSION 3.16)
 project(yolo_clip_system_demo LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
@@ -19,6 +22,7 @@ if(BUILD_HARDWARE_DEMO)
   find_path(RKNN_INCLUDE_DIR rknn_api.h PATHS /userdata/yolo_clip_bench /usr/include REQUIRED)
   find_library(RGA_LIBRARY rga REQUIRED)
   find_library(RKNN_LIBRARY rknnrt REQUIRED)
+  # 把编排代码作为公共静态库，主程序与板端工具复用同一套预处理和推理实现。
   add_library(demo_pipeline STATIC src/pipeline.cpp)
   target_include_directories(demo_pipeline PUBLIC ${RGA_INCLUDE_DIR} ${RKNN_INCLUDE_DIR} ${OpenCV_INCLUDE_DIRS})
   target_link_libraries(demo_pipeline PUBLIC demo_headers Threads::Threads ${OpenCV_LIBS} ${RGA_LIBRARY} ${RKNN_LIBRARY})
@@ -68,6 +72,7 @@ if(ENABLE_GPROF)
   target_link_options(bench_normalization PRIVATE -pg)
 endif()
 
+# 这些测试不链接板端库；sanitizer 用于检查应用侧内存/未定义行为。
 if(BUILD_TESTING)
   foreach(test_name IN ITEMS test_normalization test_queue_pool test_npu_arbiter)
     add_executable(${test_name} tests/${test_name}.cpp)

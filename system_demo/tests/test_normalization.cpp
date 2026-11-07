@@ -1,3 +1,5 @@
+// 独立验证 FP16 转换和 LUT：逐通道遍历像素值，同时测试带 padding 的行与输出尾部哨兵。
+
 #include "normalization.hpp"
 #include <algorithm>
 #include <iostream>
@@ -29,11 +31,13 @@ int main() {
     Check(tables.clip[c][v] == Float32ToFloat16(Value(v, c, true)), "CLIP LUT mismatch");
     for (bool clip : {false, true}) {
       const float value = Value(v, c, clip);
+      // 使用编译器的半精度类型作独立参考，避免 scalar/LUT 共享同一个 bug 却互相通过。
       const HalfReference half = static_cast<HalfReference>(value);
       uint16_t reference; std::memcpy(&reference, &half, sizeof(reference));
       Check(Float32ToFloat16(value) == reference, "conversion disagrees with independent IEEE binary16 reference");
     }
   }
+  // 固定历史指数进位缺陷的复现点，同时确认当前转换得到正确位模式。
   Check(LegacyFloat32ToFloat16(Value(250, 1, true)) == 0x3c00, "legacy bug reproduction changed");
   Check(Float32ToFloat16(Value(250, 1, true)) == 0x4000, "exponent-carry regression not fixed");
   for (float value : {0.f, -0.f, 1.9998449f, -1.9998449f, 65504.f, 65520.f,

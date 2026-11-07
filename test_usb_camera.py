@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# 真实 USB 摄像头的板端运行与资源采样脚本，需要连接设备和已部署模型。
+# 通过 /proc 采样进程 CPU、内存与 FD，保存报告；它不是无需硬件的单元测试。
+
 """Run repeatable live-camera inference tests and sample process resources on Linux."""
 import argparse
 import json

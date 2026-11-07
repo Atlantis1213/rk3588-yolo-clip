@@ -1,3 +1,6 @@
+// 显式内存流量计数：只覆盖应用中已标记的 raw、letterbox 和 RKNN 输入 memcpy。
+// HostSubmission 是提交字节数，不保证 SDK 内部复制量；Normalized 是计算结果写入量。
+
 #pragma once
 #include <atomic>
 #include <cstddef>

@@ -1,3 +1,6 @@
+// CPU RGB → 紧凑 NHWC FP16 张量；输入 stride 的单位为字节，输出按 RGB 顺序连续写入。
+// YOLO 使用 pixel/255；CLIP 还需按通道减均值、除标准差。LUT 与 scalar 共享公式。
+
 #pragma once
 #include <array>
 #include <cstddef>
@@ -15,6 +18,7 @@ inline Mode ParseMode(const std::string& value) {
   if (value == "lut_legacy") return Mode::LutLegacy;
   throw std::invalid_argument("normalization must be scalar, lut, scalar_legacy or lut_legacy");
 }
+// 历史转换保留用于复现实验，存在尾数舍入向指数进位的缺陷；部署应使用当前转换。
 inline uint16_t LegacyFloat32ToFloat16(float value) {
   uint32_t bits; std::memcpy(&bits, &value, sizeof(bits));
   const uint32_t sign = (bits >> 16) & 0x8000u, mantissa = bits & 0x007fffffu;
@@ -29,21 +33,25 @@ inline uint16_t LegacyFloat32ToFloat16(float value) {
                                ((mantissa + 0x00001000u) >> 13));
 }
 // IEEE binary16, round-to-nearest ties-to-even, with explicit exponent carry.
+// 返回的是 IEEE binary16 位模式，不是 uint16 数值转换；memcpy 避免违反别名规则。
 inline uint16_t Float32ToFloat16(float value) {
   uint32_t bits; std::memcpy(&bits, &value, sizeof(bits));
   const uint32_t sign = (bits >> 16) & 0x8000u;
   const uint32_t raw_exp = (bits >> 23) & 255u, mantissa = bits & 0x7fffffu;
+  // FP32 的特殊指数对应无穷或 NaN；保留符号，并为 NaN 设置半精度尾数。
   if (raw_exp == 255) return static_cast<uint16_t>(sign | 0x7c00u | (mantissa ? 0x200u : 0));
   int exponent = static_cast<int>(raw_exp) - 127;
   if (exponent > 15) return static_cast<uint16_t>(sign | 0x7c00u);
   if (exponent < -25) return static_cast<uint16_t>(sign);
   if (exponent >= -14) {
+    // 保留 10 位尾数：0xfff 加最低保留位，实现恰好中点时向偶数舍入。
     uint32_t rounded = mantissa + 0xfffu + ((mantissa >> 13) & 1u);
     int half_exp = exponent + 15;
     if (rounded & 0x800000u) { rounded = 0; ++half_exp; }
     if (half_exp >= 31) return static_cast<uint16_t>(sign | 0x7c00u);
     return static_cast<uint16_t>(sign | (half_exp << 10) | (rounded >> 13));
   }
+  // 非正规半精度数没有隐含首位，需要恢复 FP32 隐含位后按更大位移量舍入。
   const uint32_t full = mantissa | 0x800000u;
   const int shift = -exponent - 1;
   uint32_t rounded = full >> shift;
@@ -65,12 +73,15 @@ inline float Float16ToFloat32(uint16_t value) {
   else bits = sign | ((exponent + 112u) << 23) | (mantissa << 13);
   float result; std::memcpy(&result, &bits, sizeof(result)); return result;
 }
+// channel=0/1/2 必须对应 R/G/B；若传入 OpenCV BGR 会使用错误的 CLIP 通道统计。
 inline float Value(uint8_t pixel, int channel, bool clip) {
   static constexpr float mean[3] = {0.48145466f, 0.4578275f, 0.40821073f};
   static constexpr float stdv[3] = {0.26862954f, 0.26130258f, 0.27577711f};
   float value = pixel / 255.0f;
   return clip ? (value - mean[channel]) / stdv[channel] : value;
 }
+// 8 位像素每通道只有 256 种输入，可预计算最终 FP16 位模式，逐像素只查表。
+// 当前 YOLO+CLIP 表共 3 KiB，另有 3 KiB 历史表；这不是近似量化。
 struct Tables {
   std::array<std::array<uint16_t, 256>, 3> yolo{}, clip{};
   std::array<std::array<uint16_t, 256>, 3> legacy_yolo{}, legacy_clip{};
@@ -83,6 +94,7 @@ struct Tables {
     }
   }
 };
+// 允许源图像行尾有 padding，但每行至少容纳 width×3 字节；目标空间由调用方保证。
 inline void Validate(const uint8_t* source, int width, int height, size_t stride, uint16_t* output) {
   if (!source || !output || width <= 0 || height <= 0 || stride < static_cast<size_t>(width) * 3)
     throw std::invalid_argument("invalid RGB normalization shape/stride");
@@ -101,6 +113,7 @@ inline __attribute__((noinline)) void Scalar(const uint8_t* source, int width, i
 inline __attribute__((noinline)) void Lut(const uint8_t* source, int width, int height,
                                         size_t stride, uint16_t* output, bool clip, bool legacy = false) {
   Validate(source, width, height, stride, output);
+  // 函数局部 static 只初始化一次，C++11 起初始化是线程安全的；之后所有 worker 只读。
   static const Tables tables;
   const auto& table = legacy ? (clip ? tables.legacy_clip : tables.legacy_yolo) : (clip ? tables.clip : tables.yolo);
   for (int y = 0; y < height; ++y) {
@@ -112,6 +125,7 @@ inline __attribute__((noinline)) void Lut(const uint8_t* source, int width, int 
     }
   }
 }
+// 统一分派保证上层预处理不需要了解 scalar/LUT 与历史舍入实现的细节。
 inline void Run(const uint8_t* source, int width, int height, size_t stride, uint16_t* output,
                 bool clip, Mode mode) {
   if (mode == Mode::Lut || mode == Mode::LutLegacy)

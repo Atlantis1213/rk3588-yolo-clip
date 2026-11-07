@@ -1,3 +1,6 @@
+// 摄像头 DMA 预处理：先转完整 BGR 图，再分别生成 YOLO 的方形图和 CLIP 的 ROI。
+// 每个 YOLO worker 独占一个实例，内部 DMA 图像缓存按尺寸分配并复用。
+
 #pragma once
 #include "v4l2_capture.hpp"
 
@@ -14,6 +17,7 @@ class Preprocessor {
     Ensure(full_, width, height, RK_FORMAT_BGR_888);
     Blit(source, full_->Image(), {0, 0, width, height}, {0, 0, width, height});
   }
+  // 原图贴在正方形左上角，右侧/下方填 114，再缩放到 640；不是居中 letterbox。
   DmaImage& YoloRgb() {
     const int width = full_->Width(), height = full_->Height();
     const int side = std::max(width, height);
@@ -21,6 +25,7 @@ class Preprocessor {
     Ensure(yolo_, 640, 640, RK_FORMAT_RGB_888);
     // This board's RGA driver rejects color-fill jobs. Initialize constant padding
     // once per source geometry instead; each frame overwrites only the image area.
+    // 板端驱动拒绝 color-fill，故仅在几何尺寸变化时由 CPU 初始化整块背景。
     if (padding_width_ != width || padding_height_ != height) {
       CpuAccess write(square_->Buffer(), DMA_BUF_SYNC_WRITE);
       std::memset(square_->Buffer().Data(), 114, square_->Buffer().Size());
@@ -32,6 +37,7 @@ class Preprocessor {
     Blit(square_->Image(), yolo_->Image(), {0, 0, side, side}, {0, 0, 640, 640});
     return *yolo_;
   }
+  // ROI 坐标属于完整 BGR 图，RGA 同时裁剪、缩放和转 RGB，输出固定 224×224。
   DmaImage& ClipRgb(int x, int y, int width, int height) {
     Ensure(clip_, 224, 224, RK_FORMAT_RGB_888);
     Blit(full_->Image(), clip_->Image(), {x, y, width, height}, {0, 0, 224, 224});
@@ -48,6 +54,7 @@ class Preprocessor {
 };
 
 // Exercise real DMA heap allocation, FD import, color conversion, resize and CPU cache sync.
+// 用已知颜色验证真实设备操作及 padding/奇数 ROI/NV12，不能由无硬件单元测试替代。
 inline void SelfTest(const std::string& heap) {
   DmaBuffer yuyv(heap, 640 * 480 * 2);
   {

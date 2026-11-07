@@ -1,3 +1,6 @@
+# QAT 图像塔代理：权重按输出通道 fake quant，激活按 SDK 参数或校准范围 fake quant。
+# fake quant 前向模拟 INT8 网格，反向提供训练梯度；它不是 RKNN 硬件数值的精确模拟。
+
 """Same-size CLIP visual tower with backend-inspired W8A8 fake quantization.
 
 This training proxy is not claimed to be a bit-exact RKNN simulator. Canonical float
@@ -11,6 +14,7 @@ from torch.utils.checkpoint import checkpoint
 from clip_model_official import VisionTransformer
 
 
+# 将卷积/线性权重展平到 [输出通道,其余维] 后独立求范围，scale 不参与梯度求导。
 def fake_weight(weight):
     flat = weight.detach().reshape(weight.shape[0], -1)
     low = torch.minimum(flat.amin(dim=1), torch.zeros(weight.shape[0], device=weight.device))
@@ -42,6 +46,7 @@ class ActivationQuant(nn.Module):
     def forward(self, value):
         if not self.enabled:
             return value
+        # 校准阶段只累积观测范围并原样返回，完成后再冻结量化参数。
         if self.calibrating:
             data = value.detach().float()
             self.observed_low = min(self.observed_low, float(data.min()))
@@ -63,6 +68,7 @@ class ActivationQuant(nn.Module):
         self.calibrating = False
 
 
+# 沿用原始权重和偏置；冻结权重可预先缓存，训练权重则要在前向重新 fake quant。
 class QuantLinear(nn.Linear):
     def __init__(self, source, parameters, input_name, output_name):
         super().__init__(source.in_features, source.out_features, source.bias is not None)
@@ -83,6 +89,7 @@ class QuantLinear(nn.Linear):
         return self.output_quant(F.linear(self.input_quant(value), weight, self.bias))
 
 
+# 只支持图像塔的无 mask 自注意力；按多头拆分 Q/K/V 后手动执行 scaled dot-product。
 class QuantAttention(nn.MultiheadAttention):
     def __init__(self, source, parameters, prefix):
         super().__init__(source.embed_dim, source.num_heads, dropout=0.)
@@ -118,6 +125,7 @@ class QuantAttention(nn.MultiheadAttention):
         def split(x):
             return x.reshape(length,batch,self.num_heads,width//self.num_heads).permute(1,2,0,3)
         q,k,v = split(q),split(k),split(v)
+        # 每头维度 d=width/num_heads，QKᵀ 除 sqrt(d) 后 softmax，再乘 V。
         probabilities = F.softmax((q @ k.transpose(-2,-1))/math.sqrt(width//self.num_heads),dim=-1)
         attention = (probabilities @ v).permute(2,0,1,3).reshape(length,batch,width)
         output = self.output_quant(F.linear(self.projection_input_quant(attention),self.cached_projection,self.out_proj.bias))
@@ -167,6 +175,7 @@ class QuantVisual(VisionTransformer):
             if isinstance(module,(QuantLinear,QuantAttention)):
                 module.cache_weight()
 
+    # 仅导出标准浮点参数，排除代理量化缓存，保持部署图架构与模型尺寸。
     def canonical_state(self):
         return {name:parameter.detach().cpu() for name,parameter in self.named_parameters()}
 
@@ -180,6 +189,7 @@ class QuantVisual(VisionTransformer):
         x=self.ln_pre(x+self.positional_embedding).permute(1,0,2)
         for block in self.transformer.resblocks:
             if self.checkpoint_blocks and self.training:
+                # 梯度检查点用重算换取训练显存；b=block 固定当前循环层，避免闭包捕获后续层。
                 x=checkpoint(lambda value,b=block:b(value),x,use_reentrant=False)
             else:
                 x=block(x)

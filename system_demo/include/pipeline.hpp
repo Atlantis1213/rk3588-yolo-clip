@@ -1,3 +1,6 @@
+// 对 main 暴露的流水线接口：统一参数解析，串行基线和线程池接受相同模型/文本库。
+// 具体生产者、worker 与退出协议见 src/pipeline.cpp。
+
 #pragma once
 #include "model_runner.hpp"
 #include "pipeline_queue.hpp"

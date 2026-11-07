@@ -1,3 +1,7 @@
+// 早期单文件 YOLO → ROI → CLIP → 文本匹配性能演示，保留用于历史对照。
+// 当前工程位于 system_demo/，包含修正后的 FP16 舍入、RAII 槽位租约和更完善的退出处理。
+// 阅读本文件时可先看 main，再看 RunSerial/RunPool，最后回看模型及预处理类。
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -38,6 +42,7 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+// 命令行配置与默认值；队列容量控制排队数量，线程数控制模型上下文数量。
 struct Options {
   std::string yolo_model_path;
   std::string clip_model_path;
@@ -71,6 +76,7 @@ struct Options {
   bool serial = false;
 };
 
+// 生产者投递的原始图像任务；capture_time 用来计算包含排队时间的总延迟。
 struct FrameTask {
   int seq = 0;
   int image_index = 0;
@@ -80,6 +86,7 @@ struct FrameTask {
   Clock::time_point capture_time;
 };
 
+// 旧实现只携带整数 slot_id，归还输入槽需靠每条路径显式调用 Release。
 struct ClipTask {
   int seq = 0;
   int image_index = 0;
@@ -127,6 +134,7 @@ struct SamplePrediction {
   bool is_unknown = false;
 };
 
+// 原子计数配合互斥锁保护累计值；完整分类 FPS 与仅经过检测的帧数应分别解读。
 struct Stats {
   std::atomic<int> generated{0};
   std::atomic<int> frame_dropped{0};
@@ -379,6 +387,7 @@ bool ConvertColorWithRga(const cv::Mat& src, cv::Mat& dst, int src_format, int d
 }
 
 template <typename T>
+// 实时有界队列，满时丢弃最旧待处理任务；旧实现的 on_drop 在锁内调用。
 class DropOldestQueue {
  public:
   explicit DropOldestQueue(size_t capacity) : capacity_(capacity) {}
@@ -423,6 +432,8 @@ class DropOldestQueue {
   std::queue<T> queue_;
 };
 
+// 旧式手动输入槽池：TryAcquire 后必须配对 Release。
+// 关闭队列时的所有权遗漏有专门复现程序，当前主工程改用 BufferPool::Lease。
 class ClipSlotPool {
  public:
   ClipSlotPool(int count, size_t bytes_per_slot, const std::string& heap = "") : slots_(count) {
@@ -530,6 +541,7 @@ cv::VideoCapture OpenVideo(const std::string& path) {
   return cap;
 }
 
+// 离线文本特征先归一化；推理时对图像 embedding 归一化后点积，得到余弦排名。
 class TextBank {
  public:
   void Load(const std::string& label_tsv_path, const std::string& feature_bin_path) {
@@ -649,6 +661,7 @@ rknn_core_mask ClipCoreMask(int worker_id, const std::string& mode) {
   }
 }
 
+// 封装 RKNN context、输入提交和输出读取；每个 worker 使用独立 context。
 class BaseRunner {
  public:
   BaseRunner() = default;
@@ -867,6 +880,7 @@ void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool clip) {
   read.Finish();
 }
 
+// 固定单类 [5,N] 输出协议，挑选最高置信框并还原到原图坐标；没有多目标 NMS。
 class YoloRunner : public BaseRunner {
  public:
   explicit YoloRunner(bool use_rga) : use_rga_(use_rga) {}
@@ -1009,6 +1023,7 @@ class YoloRunner : public BaseRunner {
 };
 
 // Preprocessing owns mutable OpenCV buffers, so every producing worker needs its own instance.
+// ROI 直接 resize224、BGR→RGB、按 CLIP 均值方差归一化，最后写 FP16 NHWC。
 class ClipPreprocessor {
  public:
   explicit ClipPreprocessor(bool use_rga) : use_rga_(use_rga) {}
@@ -1061,6 +1076,7 @@ class ClipPreprocessor {
   cv::Mat rgb_;
 };
 
+// 只运行图像编码器；文本侧不逐帧运行模型，而是查离线特征库。
 class ClipRunner : public BaseRunner {
  public:
   size_t InputBytes() const { return ClipPreprocessor::InputBytes(); }
@@ -1306,6 +1322,7 @@ void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::
   std::cout << oss.str();
 }
 
+// 保存工作线程异常，通知其他线程退出；主线程 join 后再统一报告错误。
 class ThreadFailure {
  public:
   std::atomic<bool> stopped{false};
@@ -1375,6 +1392,7 @@ void PrepareClipTask(const FrameTask& task, const cv::Rect& roi, ClipPreprocesso
   elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
+// 串行基线：输入生产独立进行，检测、ROI 预处理、分类在单 worker 内顺序执行。
 void RunSerial(const Options& opt, const std::vector<cv::Mat>& images,
                const std::vector<std::string>& image_paths, const TextBank& text_bank,
                const std::vector<uint8_t>& yolo_model, const std::vector<uint8_t>& clip_model) {
@@ -1493,6 +1511,7 @@ void RunSerial(const Options& opt, const std::vector<cv::Mat>& images,
               std::chrono::duration<double, std::milli>(wall_end - wall_start).count());
 }
 
+// 两级队列分别连接生产者、YOLO 线程池和 CLIP 线程池，实现不同帧之间的阶段重叠。
 void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
              const std::vector<std::string>& image_paths, const TextBank& text_bank,
              const std::vector<uint8_t>& yolo_model,
