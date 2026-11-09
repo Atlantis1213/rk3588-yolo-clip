@@ -81,5 +81,4 @@ inline cv::VideoCapture OpenVideo(const std::string& path) {
   return cap;
 }
 
-
 }  // namespace yolo_clip

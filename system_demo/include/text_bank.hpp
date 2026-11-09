@@ -55,7 +55,9 @@ class TextBank {
     }
   }
 
-  ClassificationResult Classify(const float* embedding, size_t count, int topk,
+  ClassificationResult Classify(const float* embedding,
+                                size_t count,
+                                int topk,
                                 float reject_threshold) const {
     if (dim_ == 0 || count != dim_) {
       throw std::runtime_error("embedding dim mismatch");
@@ -76,8 +78,9 @@ class TextBank {
       const float* text = features_.data() + row * dim_;
       scored.emplace_back(Dot(text, normalized.data(), dim_), static_cast<int>(row));
     }
-    std::sort(scored.begin(), scored.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+      return a.first > b.first;
+    });
 
     ClassificationResult result;
     const int k = std::min(topk, static_cast<int>(scored.size()));
@@ -107,6 +110,5 @@ class TextBank {
   std::vector<std::string> categories_;
   std::vector<float> features_;
 };
-
 
 }  // namespace yolo_clip

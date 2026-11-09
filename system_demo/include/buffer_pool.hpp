@@ -16,58 +16,105 @@ class BufferPool {
     explicit State(std::vector<T> initial) : slots(std::move(initial)) {
       // 归还时只 push 已预留容量的索引，使 noexcept 的释放路径无需再次分配内存。
       free.reserve(slots.size());
-      for (size_t i = slots.size(); i > 0; --i) free.push_back(static_cast<int>(i - 1));
+      // 逆序压入索引，使第一次从 free.back() 取得编号 0。
+      // slots 不再增减元素，因此租约持有索引期间对应的缓冲地址稳定。
+      for (size_t i = slots.size(); i > 0; --i) {
+        free.push_back(static_cast<int>(i - 1));
+      }
     }
+
     std::mutex mutex;
     std::vector<T> slots;
     std::vector<int> free;
   };
+
  public:
   // A lease owns the obligation to return a slot, including exception/closed-queue paths.
   class Lease {
    public:
     Lease() = default;
-    ~Lease() { Reset(); }
+
+    // 析构自动归还，覆盖普通结束、异常展开和队列丢弃路径。
+    ~Lease() {
+      Reset();
+    }
+
     // 禁止复制，确保一个槽只有一个归还者；移动只转移责任，不复制张量。
     Lease(const Lease&) = delete;
     Lease& operator=(const Lease&) = delete;
-    Lease(Lease&& other) noexcept : state_(std::move(other.state_)), id_(other.id_) {}
+
+    // 移动 shared_ptr 后，other.state_ 为空；即使它保留旧 id_，也不再承担归还责任。
+    Lease(Lease&& other) noexcept : state_(std::move(other.state_)), id_(other.id_) {
+    }
+
     Lease& operator=(Lease&& other) noexcept {
-      if (this != &other) { Reset(); state_ = std::move(other.state_); id_ = other.id_; }
+      // 先归还当前对象原有槽位，再接管新槽位；自我移动时不做任何操作。
+      if (this != &other) {
+        Reset();
+        state_ = std::move(other.state_);
+        id_ = other.id_;
+      }
       return *this;
     }
-    explicit operator bool() const { return static_cast<bool>(state_); }
+
+    // 以是否持有 State 判断租约有效性；TryAcquire 失败返回的默认租约为 false。
+    explicit operator bool() const {
+      return static_cast<bool>(state_);
+    }
+
     T& Get() const {
-      if (!state_) throw std::logic_error("accessing empty buffer lease");
+      if (!state_) {
+        throw std::logic_error("accessing empty buffer lease");
+      }
       return state_->slots[id_];
     }
-    int Id() const { return state_ ? id_ : -1; }
+
+    int Id() const {
+      return state_ ? id_ : -1;
+    }
+
     // 先移出 state_ 使当前租约失效；重复 Reset 不会重复归还同一个索引。
     void Reset() noexcept {
+      // 局部 shared_ptr 暂时维持 State 存活，同时清空当前租约，保证多次 Reset 只归还一次。
       auto state = std::move(state_);
       if (state) {
         std::lock_guard<std::mutex> lock(state->mutex);
+        // 只修改空闲索引表，不销毁槽内存；后续借用者会复用同一块输入缓冲。
         state->free.push_back(id_);  // Reserved capacity; no allocation on release.
       }
     }
+
    private:
     friend class BufferPool;
-    Lease(std::shared_ptr<State> state, int id) : state_(std::move(state)), id_(id) {}
+
+    Lease(std::shared_ptr<State> state, int id) : state_(std::move(state)), id_(id) {
+    }
+
     std::shared_ptr<State> state_;
     int id_ = -1;
   };
-  explicit BufferPool(std::vector<T> slots) : state_(std::make_shared<State>(std::move(slots))) {}
+
+  explicit BufferPool(std::vector<T> slots) : state_(std::make_shared<State>(std::move(slots))) {
+  }
+
   // 非阻塞借用：没空闲槽就返回空租约，由调用者选择丢帧；锁只保护空闲索引表。
   Lease TryAcquire() {
     std::lock_guard<std::mutex> lock(state_->mutex);
-    if (state_->free.empty()) return {};
-    int id = state_->free.back(); state_->free.pop_back();
+    if (state_->free.empty()) {
+      return {};
+    }
+    // 取出编号和删除空闲记录必须位于同一临界区，防止两个 worker 借到同一个槽。
+    int id = state_->free.back();
+    state_->free.pop_back();
+    // 返回对象接管该编号的归还责任；锁在函数退出时释放，不覆盖整段推理过程。
     return Lease(state_, id);
   }
+
   size_t FreeCount() const {
     std::lock_guard<std::mutex> lock(state_->mutex);
     return state_->free.size();
   }
+
  private:
   std::shared_ptr<State> state_;
 };

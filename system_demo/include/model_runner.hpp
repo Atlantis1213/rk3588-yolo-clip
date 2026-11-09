@@ -9,11 +9,21 @@ namespace yolo_clip {
 
 // 这里选择 NPU 核，不是 CPU 线程亲和性；adaptive 的实际核在每次 RunRaw 前决定。
 inline rknn_core_mask YoloCoreMask(int worker_id, const std::string& mode = "legacy") {
-  if (mode == "core0") return RKNN_NPU_CORE_0;
-  if (mode == "core1") return RKNN_NPU_CORE_1;
-  if (mode == "core2") return RKNN_NPU_CORE_2;
-  if (mode == "all") return RKNN_NPU_CORE_0_1_2;
-  if (mode == "auto") return RKNN_NPU_CORE_AUTO;
+  if (mode == "core0") {
+    return RKNN_NPU_CORE_0;
+  }
+  if (mode == "core1") {
+    return RKNN_NPU_CORE_1;
+  }
+  if (mode == "core2") {
+    return RKNN_NPU_CORE_2;
+  }
+  if (mode == "all") {
+    return RKNN_NPU_CORE_0_1_2;
+  }
+  if (mode == "auto") {
+    return RKNN_NPU_CORE_AUTO;
+  }
   return worker_id % 2 == 0 ? RKNN_NPU_CORE_0 : RKNN_NPU_CORE_1;
 }
 
@@ -22,10 +32,18 @@ inline rknn_core_mask ClipCoreMask(int worker_id, const std::string& mode) {
     const rknn_core_mask cores[] = {RKNN_NPU_CORE_0, RKNN_NPU_CORE_1, RKNN_NPU_CORE_2};
     return cores[worker_id % 3];
   }
-  if (mode == "split12") return worker_id % 2 ? RKNN_NPU_CORE_2 : RKNN_NPU_CORE_1;
-  if (mode == "core0") return RKNN_NPU_CORE_0;
-  if (mode == "core1") return RKNN_NPU_CORE_1;
-  if (mode == "core2") return RKNN_NPU_CORE_2;
+  if (mode == "split12") {
+    return worker_id % 2 ? RKNN_NPU_CORE_2 : RKNN_NPU_CORE_1;
+  }
+  if (mode == "core0") {
+    return RKNN_NPU_CORE_0;
+  }
+  if (mode == "core1") {
+    return RKNN_NPU_CORE_1;
+  }
+  if (mode == "core2") {
+    return RKNN_NPU_CORE_2;
+  }
   if (mode == "all") {
     return RKNN_NPU_CORE_0_1_2;
   }
@@ -48,8 +66,11 @@ inline rknn_core_mask ClipCoreMask(int worker_id, const std::string& mode) {
 class BaseRunner {
  public:
   BaseRunner() = default;
+
   ~BaseRunner() {
-    for (auto& entry : imported_inputs_) rknn_destroy_mem(ctx_, entry.second.memory);
+    for (auto& entry : imported_inputs_) {
+      rknn_destroy_mem(ctx_, entry.second.memory);
+    }
     imported_inputs_.clear();
     if (input_mem_ != nullptr) {
       rknn_destroy_mem(ctx_, input_mem_);
@@ -64,8 +85,11 @@ class BaseRunner {
   BaseRunner& operator=(const BaseRunner&) = delete;
 
   void InitFromModel(const std::vector<uint8_t>& model_bytes, rknn_core_mask core_mask) {
-    int ret = rknn_init(&ctx_, const_cast<uint8_t*>(model_bytes.data()),
-                        static_cast<uint32_t>(model_bytes.size()), 0, nullptr);
+    int ret = rknn_init(&ctx_,
+                        const_cast<uint8_t*>(model_bytes.data()),
+                        static_cast<uint32_t>(model_bytes.size()),
+                        0,
+                        nullptr);
     if (ret != RKNN_SUCC) {
       throw std::runtime_error("rknn_init failed: " + std::to_string(ret));
     }
@@ -83,38 +107,67 @@ class BaseRunner {
     PostInit(core_mask);
   }
 
-  rknn_context* MutableContext() { return &ctx_; }
-  void EnableIoMem(bool enabled) { use_io_mem_ = enabled; }
-  void EnableAdaptiveCore(bool enabled) { adaptive_core_ = enabled; }
-  void EnableDirectInput(const std::string& heap, bool allow_quantized = false) {
-    direct_heap_ = heap; allow_quantized_input_ = allow_quantized;
+  rknn_context* MutableContext() {
+    return &ctx_;
   }
-  const rknn_tensor_attr& NativeInputAttr() const { return native_input_attr_; }
-  double LastGateWaitMs() const { return last_gate_wait_ms_; }
+
+  void EnableIoMem(bool enabled) {
+    use_io_mem_ = enabled;
+  }
+
+  void EnableAdaptiveCore(bool enabled) {
+    adaptive_core_ = enabled;
+  }
+
+  void EnableDirectInput(const std::string& heap, bool allow_quantized = false) {
+    direct_heap_ = heap;
+    allow_quantized_input_ = allow_quantized;
+  }
+
+  const rknn_tensor_attr& NativeInputAttr() const {
+    return native_input_attr_;
+  }
+
+  double LastGateWaitMs() const {
+    return last_gate_wait_ms_;
+  }
+
   // 逻辑张量字节数与 SDK 要求的物理分配大小可能不同；原生输入要满足 size_with_stride。
   size_t InputAllocationBytes(size_t packed_bytes) const {
-    if (direct_heap_.empty()) return packed_bytes;
-    if (native_input_attr_.n_elems * sizeof(uint16_t) != packed_bytes)
+    if (direct_heap_.empty()) {
+      return packed_bytes;
+    }
+    if (native_input_attr_.n_elems * sizeof(uint16_t) != packed_bytes) {
       throw std::runtime_error("direct input tensor size does not match model");
+    }
     return std::max(packed_bytes, static_cast<size_t>(native_input_attr_.size_with_stride));
   }
+
   // 同一 context 按 FD 缓存导入结果；ImportedInput 同时持有 shared_ptr，防止 FD 提前关闭并复用。
   void RunDma(const std::shared_ptr<camera_dma::DmaBuffer>& buffer, double& run_ms) {
     auto found = imported_inputs_.find(buffer->Fd());
     if (found == imported_inputs_.end()) {
-      rknn_tensor_mem* mem = rknn_create_mem_from_fd(ctx_, buffer->Fd(), buffer->Data(),
-                                                  buffer->Size(), 0);
-      if (!mem) throw std::runtime_error("rknn_create_mem_from_fd failed");
+      rknn_tensor_mem* mem =
+          rknn_create_mem_from_fd(ctx_, buffer->Fd(), buffer->Data(), buffer->Size(), 0);
+      if (!mem) {
+        throw std::runtime_error("rknn_create_mem_from_fd failed");
+      }
       try {
         found = imported_inputs_.emplace(buffer->Fd(), ImportedInput{buffer, mem}).first;
-      } catch (...) { rknn_destroy_mem(ctx_, mem); throw; }
+        // FD 导入已成功，但 map 插入仍可能因分配失败而抛错；先销毁临时 SDK 句柄再原样重抛。
+      }
+      catch (...) {
+        rknn_destroy_mem(ctx_, mem);
+        throw;
+      }
     }
     rknn_tensor_attr attr = native_input_attr_;
     // 原生绑定跳过 SDK 输入转换；因此调用方必须已经正确处理布局、数据类型和归一化。
     attr.pass_through = 1;
     const int ret = rknn_set_io_mem(ctx_, found->second.memory, &attr);
-    if (ret != RKNN_SUCC)
+    if (ret != RKNN_SUCC) {
       throw std::runtime_error("bind native DMA input failed: " + std::to_string(ret));
+    }
     RunRaw(nullptr, 0, RKNN_TENSOR_FLOAT16, RKNN_TENSOR_NHWC, run_ms, true);
   }
 
@@ -156,29 +209,38 @@ class BaseRunner {
     if (!direct_heap_.empty()) {
       native_input_attr_ = {};
       native_input_attr_.index = 0;
-      ret = rknn_query(ctx_, RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR, &native_input_attr_,
-                       sizeof(native_input_attr_));
+      ret = rknn_query(
+          ctx_, RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR, &native_input_attr_, sizeof(native_input_attr_));
       // 默认只接受经过验证的紧凑 FP16 NHWC；INT8 开关供工具诊断使用，不是默认部署输入。
-      const bool type_supported = native_input_attr_.type == RKNN_TENSOR_FLOAT16 ||
+      const bool type_supported =
+          native_input_attr_.type == RKNN_TENSOR_FLOAT16 ||
           (allow_quantized_input_ && native_input_attr_.type == RKNN_TENSOR_INT8);
-      if (ret != RKNN_SUCC || !type_supported ||
-          native_input_attr_.fmt != RKNN_TENSOR_NHWC || native_input_attr_.n_dims != 4 ||
-          native_input_attr_.dims[0] != 1 || native_input_attr_.dims[3] != 3 ||
+      if (ret != RKNN_SUCC || !type_supported || native_input_attr_.fmt != RKNN_TENSOR_NHWC ||
+          native_input_attr_.n_dims != 4 || native_input_attr_.dims[0] != 1 ||
+          native_input_attr_.dims[3] != 3 ||
           (native_input_attr_.w_stride != 0 &&
-           native_input_attr_.w_stride != native_input_attr_.dims[2]))
-        throw std::runtime_error("zero-copy requires packed native FP16 NHWC input; model layout unsupported");
+           native_input_attr_.w_stride != native_input_attr_.dims[2])) {
+        throw std::runtime_error(
+            "zero-copy requires packed native FP16 NHWC input; model layout unsupported");
+      }
       if (native_input_attr_.type == RKNN_TENSOR_INT8 &&
           (native_input_attr_.qnt_type != RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC ||
            !std::isfinite(native_input_attr_.scale) || native_input_attr_.scale <= 0 ||
-           native_input_attr_.size_with_stride != native_input_attr_.n_elems))
+           native_input_attr_.size_with_stride != native_input_attr_.n_elems)) {
         throw std::runtime_error("native INT8 experiment requires packed affine input");
+      }
     }
   }
 
   // 统一三种输入路径：已绑定原生 DMA、复制到 SDK IO 内存、普通宿主输入提交。
-  void RunRaw(const uint8_t* input_buf, uint32_t input_size, rknn_tensor_type type,
-              rknn_tensor_format fmt, double& run_ms, bool already_bound = false) {
+  void RunRaw(const uint8_t* input_buf,
+              uint32_t input_size,
+              rknn_tensor_type type,
+              rknn_tensor_format fmt,
+              double& run_ms,
+              bool already_bound = false) {
     int ret = RKNN_SUCC;
+    // already_bound 仅由 RunDma 在绑定成功后传入，避免重复调用输入转换或复制。
     if (already_bound) {
       // CPU normalization already wrote directly into the imported native tensor.
     } else if (use_io_mem_) {
@@ -207,6 +269,7 @@ class BaseRunner {
     std::memset(&output, 0, sizeof(output));
     // SDK 将输出转换为 float 写入预分配 vector，后处理不依赖模型内部量化类型。
     output.want_float = 1;
+    // 输出由 output_float_ 的连续内存承载；SDK 可写入该地址，但不负责释放 vector 的内存。
     output.is_prealloc = 1;
     output.index = 0;
     output.buf = output_float_.data();
@@ -218,7 +281,9 @@ class BaseRunner {
     auto permit = adaptive_core_ ? npu_arbiter.AcquireAnyCore() : npu_arbiter.Acquire(core_bits_);
     if (adaptive_core_) {
       const int change = rknn_set_core_mask(ctx_, static_cast<rknn_core_mask>(permit.Mask()));
-      if (change != RKNN_SUCC) throw std::runtime_error("dynamic NPU mask change failed: " + std::to_string(change));
+      if (change != RKNN_SUCC) {
+        throw std::runtime_error("dynamic NPU mask change failed: " + std::to_string(change));
+      }
     }
     last_gate_wait_ms_ = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     ret = rknn_run(ctx_, nullptr);
@@ -232,6 +297,7 @@ class BaseRunner {
     auto end = Clock::now();
     run_ms = std::chrono::duration<double, std::milli>(end - start).count();
 
+    // 读取完成后结束 SDK 的输出访问；预分配的向量仍保留给后处理和下一次执行复用。
     ret = rknn_outputs_release(ctx_, 1, &output);
     if (ret != RKNN_SUCC) {
       throw std::runtime_error("rknn_outputs_release failed: " + std::to_string(ret));
@@ -272,10 +338,12 @@ class BaseRunner {
   double last_gate_wait_ms_ = 0.0;
   std::string direct_heap_;
   rknn_tensor_attr native_input_attr_{};
+
   struct ImportedInput {
     std::shared_ptr<camera_dma::DmaBuffer> buffer;
     rknn_tensor_mem* memory;
   };
+
   std::map<int, ImportedInput> imported_inputs_;
   std::shared_ptr<camera_dma::DmaBuffer> direct_input_;
 };
@@ -284,15 +352,18 @@ class BaseRunner {
 class YoloRunner : public BaseRunner {
  public:
   explicit YoloRunner(bool use_rga, normalization::Mode mode = normalization::Mode::Scalar)
-      : use_rga_(use_rga), mode_(mode) {}
+      : use_rga_(use_rga), mode_(mode) {
+  }
 
   YoloResult Run(const cv::Mat& image_bgr, float conf_threshold, double& preprocess_ms) {
     PrepareInput(image_bgr, preprocess_ms);
     return Infer(image_bgr.cols, image_bgr.rows, conf_threshold);
   }
 
-  YoloResult RunCamera(const camera_dma::Frame& frame, camera_dma::Preprocessor& prep,
-                      float conf_threshold, double& preprocess_ms) {
+  YoloResult RunCamera(const camera_dma::Frame& frame,
+                       camera_dma::Preprocessor& prep,
+                       float conf_threshold,
+                       double& preprocess_ms) {
     const auto start = Clock::now();
     const int width = frame.owner->Width(), height = frame.owner->Height();
     letterbox_scale_ = 640.0f / std::max(width, height);
@@ -300,9 +371,13 @@ class YoloRunner : public BaseRunner {
     auto& rgb = prep.YoloRgb();
     uint8_t* destination = InputStorage();
     std::unique_ptr<camera_dma::CpuAccess> write;
-    if (direct_input_) write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    if (direct_input_) {
+      write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    }
     PackRgbFp16(rgb, destination, false, mode_);
-    if (write) write->Finish();
+    if (write) {
+      write->Finish();
+    }
     preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     return Infer(width, height, conf_threshold);
   }
@@ -311,8 +386,10 @@ class YoloRunner : public BaseRunner {
   uint8_t* InputStorage() {
     const size_t bytes = 640 * 640 * 3 * sizeof(uint16_t);
     if (!direct_heap_.empty()) {
-      if (!direct_input_) direct_input_ = std::make_shared<camera_dma::DmaBuffer>(
-          direct_heap_, InputAllocationBytes(bytes));
+      if (!direct_input_) {
+        direct_input_ =
+            std::make_shared<camera_dma::DmaBuffer>(direct_heap_, InputAllocationBytes(bytes));
+      }
       return static_cast<uint8_t*>(direct_input_->Data());
     }
     input_bytes_.resize(bytes);
@@ -321,9 +398,15 @@ class YoloRunner : public BaseRunner {
 
   YoloResult Infer(int width, int height, float conf_threshold) {
     double run_ms = 0.0;
-    if (direct_input_) RunDma(direct_input_, run_ms);
-    else RunRaw(input_bytes_.data(), static_cast<uint32_t>(input_bytes_.size()),
-                RKNN_TENSOR_FLOAT16, RKNN_TENSOR_NHWC, run_ms);
+    if (direct_input_) {
+      RunDma(direct_input_, run_ms);
+    } else {
+      RunRaw(input_bytes_.data(),
+             static_cast<uint32_t>(input_bytes_.size()),
+             RKNN_TENSOR_FLOAT16,
+             RKNN_TENSOR_NHWC,
+             run_ms);
+    }
 
     YoloResult result;
     result.run_ms = run_ms;
@@ -406,12 +489,15 @@ class YoloRunner : public BaseRunner {
 
     auto* dst = reinterpret_cast<uint16_t*>(InputStorage());
     std::unique_ptr<camera_dma::CpuAccess> write;
-    if (direct_input_) write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    if (direct_input_) {
+      write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    }
     normalization::Run(rgb_.data, 640, 640, rgb_.step, dst, false, mode_);
     copy_metrics.Normalized(640 * 640 * 3 * sizeof(uint16_t));
-    if (write) write->Finish();
-    preprocess_ms =
-        std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
+    if (write) {
+      write->Finish();
+    }
+    preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
   }
 
   bool use_rga_ = false;
@@ -426,25 +512,40 @@ class YoloRunner : public BaseRunner {
 // CLIP runner 只运行图像塔并保留 embedding；离线文本特征匹配由 TextBank 完成。
 class ClipRunner : public BaseRunner {
  public:
-  size_t InputBytes() const { return ClipPreprocessor::InputBytes(); }
-  size_t OutputCount() const { return output_float_.size(); }
-  const float* OutputData() const { return output_float_.data(); }
+  size_t InputBytes() const {
+    return ClipPreprocessor::InputBytes();
+  }
+
+  size_t OutputCount() const {
+    return output_float_.size();
+  }
+
+  const float* OutputData() const {
+    return output_float_.data();
+  }
 
   ClipResult RunPrepared(const uint8_t* prepared_bytes) {
     double run_ms = 0.0;
-    RunRaw(prepared_bytes, static_cast<uint32_t>(InputBytes()), RKNN_TENSOR_FLOAT16,
-           RKNN_TENSOR_NHWC, run_ms);
+    RunRaw(prepared_bytes,
+           static_cast<uint32_t>(InputBytes()),
+           RKNN_TENSOR_FLOAT16,
+           RKNN_TENSOR_NHWC,
+           run_ms);
     ClipResult result;
     result.run_ms = run_ms;
     result.gate_wait_ms = LastGateWaitMs();
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
     return result;
   }
+
   // 诊断入口：提交 float32 输入以比较 SDK 输入转换行为，常规流水线使用 FP16。
   ClipResult RunPreparedFloat32(const float* input) {
     ClipResult result;
-    RunRaw(reinterpret_cast<const uint8_t*>(input), 224 * 224 * 3 * sizeof(float),
-           RKNN_TENSOR_FLOAT32, RKNN_TENSOR_NHWC, result.run_ms);
+    RunRaw(reinterpret_cast<const uint8_t*>(input),
+           224 * 224 * 3 * sizeof(float),
+           RKNN_TENSOR_FLOAT32,
+           RKNN_TENSOR_NHWC,
+           result.run_ms);
     result.gate_wait_ms = LastGateWaitMs();
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
     return result;
@@ -457,8 +558,6 @@ class ClipRunner : public BaseRunner {
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
     return result;
   }
-
 };
-
 
 }  // namespace yolo_clip

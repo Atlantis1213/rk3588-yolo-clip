@@ -17,20 +17,32 @@ inline void PinThreadToCore(int core_id) {
 }
 
 inline int ProducerCore(const Options& opt) {
-  if (opt.affinity_profile == "legacy") return 7;
-  if (opt.affinity_profile == "segregated") return 4;
+  if (opt.affinity_profile == "legacy") {
+    return 7;
+  }
+  if (opt.affinity_profile == "segregated") {
+    return 4;
+  }
   return -1;
 }
 
 inline int YoloWorkerCore(const Options& opt, int worker_id) {
-  if (opt.affinity_profile == "legacy") return worker_id % 4;
-  if (opt.affinity_profile == "segregated") return 5 + (worker_id % 3);
+  if (opt.affinity_profile == "legacy") {
+    return worker_id % 4;
+  }
+  if (opt.affinity_profile == "segregated") {
+    return 5 + (worker_id % 3);
+  }
   return -1;
 }
 
 inline int ClipWorkerCore(const Options& opt, int worker_id) {
-  if (opt.affinity_profile == "legacy") return 4 + (worker_id % 4);
-  if (opt.affinity_profile == "segregated") return worker_id % 4;
+  if (opt.affinity_profile == "legacy") {
+    return 4 + (worker_id % 4);
+  }
+  if (opt.affinity_profile == "segregated") {
+    return worker_id % 4;
+  }
   return -1;
 }
 
@@ -38,27 +50,37 @@ inline int ClipWorkerCore(const Options& opt, int worker_id) {
 class ThreadFailure {
  public:
   std::atomic<bool> stopped{false};
+
   template <typename Work, typename Wake>
   void Guard(Work work, Wake wake) noexcept {
-    try { work(); }
+    try {
+      work();
+    }
     catch (...) {
       {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!error_) error_ = std::current_exception();
+        // 只保存第一个失败原因，避免其他线程退出过程中产生的后续错误覆盖根因。
+        if (!error_) {
+          error_ = std::current_exception();
+        }
       }
       // 停止标志配合关闭队列使用：仅设置标志无法唤醒正在条件变量上等待的线程。
       stopped.store(true);
+      // wake 由流水线提供，负责关闭相关队列；Guard 只处理错误协调，不知道具体队列类型。
       wake();
     }
   }
+
   // 主线程在所有 worker join 后调用，此时 error_ 已不再被并发写入。
   void Rethrow() {
-    if (error_) std::rethrow_exception(error_);
+    if (error_) {
+      std::rethrow_exception(error_);
+    }
   }
+
  private:
   std::mutex mutex_;
   std::exception_ptr error_;
 };
-
 
 }  // namespace yolo_clip

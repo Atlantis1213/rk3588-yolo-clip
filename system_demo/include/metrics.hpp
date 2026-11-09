@@ -75,8 +75,12 @@ struct Stats {
   }
 
   // 只有完成 CLIP 和文本匹配的任务进入此统计；无目标而跳过的任务不算 completed。
-  void AddCompleted(bool was_detected, double latency_ms, uint64_t checksum, int image_index,
-                    const std::string& source_name, const ClassificationResult& cls) {
+  void AddCompleted(bool was_detected,
+                    double latency_ms,
+                    uint64_t checksum,
+                    int image_index,
+                    const std::string& source_name,
+                    const ClassificationResult& cls) {
     completed.fetch_add(1);
     if (was_detected) {
       detected.fetch_add(1);
@@ -105,8 +109,10 @@ struct Stats {
   }
 };
 
-inline void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::string>& image_paths,
-                 double wall_ms) {
+inline void PrintReport(const Options& opt,
+                        const Stats& stats,
+                        const std::vector<std::string>& image_paths,
+                        double wall_ms) {
   const int completed = stats.completed.load();
   const int skipped_no_object = stats.skipped_no_object.load();
   // processed 包括无目标而跳过 CLIP 的帧；completed_fps 才表示完整两模型链路的吞吐。
@@ -129,16 +135,24 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
   std::map<int, SamplePrediction> sample_predictions;
   {
     std::lock_guard<std::mutex> lock(stats.accum_mutex);
-    if (yolo_runs > 0) yolo_mean = stats.yolo_run_ms_sum / yolo_runs;
-    if (clip_runs > 0) clip_mean = stats.clip_run_ms_sum / clip_runs;
+    if (yolo_runs > 0) {
+      yolo_mean = stats.yolo_run_ms_sum / yolo_runs;
+    }
+    if (clip_runs > 0) {
+      clip_mean = stats.clip_run_ms_sum / clip_runs;
+    }
     if (stats.yolo_preprocess_runs.load() > 0) {
       yolo_pre_mean = stats.yolo_preprocess_ms_sum / stats.yolo_preprocess_runs.load();
     }
     if (stats.clip_preprocess_runs.load() > 0) {
       clip_pre_mean = stats.clip_preprocess_ms_sum / stats.clip_preprocess_runs.load();
     }
-    if (yolo_runs > 0) yolo_queue_wait_mean = stats.yolo_queue_wait_ms_sum / yolo_runs;
-    if (clip_runs > 0) clip_queue_wait_mean = stats.clip_queue_wait_ms_sum / clip_runs;
+    if (yolo_runs > 0) {
+      yolo_queue_wait_mean = stats.yolo_queue_wait_ms_sum / yolo_runs;
+    }
+    if (clip_runs > 0) {
+      clip_queue_wait_mean = stats.clip_queue_wait_ms_sum / clip_runs;
+    }
     if (completed > 0) {
       latency_mean = stats.latency_ms_sum / completed;
       latency_min = stats.latency_ms_min;
@@ -159,8 +173,10 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
   oss << "  \"clip_core_mode\": \"" << opt.clip_core_mode << "\",\n";
   oss << "  \"yolo_core_mode\": \"" << opt.yolo_core_mode << "\",\n";
   oss << "  \"npu_gate\": \"" << opt.npu_gate << "\",\n";
-  oss << "  \"yolo_npu_gate_wait_ms_mean\": " << (yolo_runs ? stats.yolo_gate_wait_ms_sum / yolo_runs : 0) << ",\n";
-  oss << "  \"clip_npu_gate_wait_ms_mean\": " << (clip_runs ? stats.clip_gate_wait_ms_sum / clip_runs : 0) << ",\n";
+  oss << "  \"yolo_npu_gate_wait_ms_mean\": "
+      << (yolo_runs ? stats.yolo_gate_wait_ms_sum / yolo_runs : 0) << ",\n";
+  oss << "  \"clip_npu_gate_wait_ms_mean\": "
+      << (clip_runs ? stats.clip_gate_wait_ms_sum / clip_runs : 0) << ",\n";
   oss << "  \"use_io_mem\": " << (opt.use_io_mem ? "true" : "false") << ",\n";
   oss << "  \"zero_copy_input\": " << (opt.zero_copy_input ? "true" : "false") << ",\n";
   oss << "  \"camera_device\": \"" << JsonEscape(opt.camera_device) << "\",\n";
@@ -168,14 +184,22 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
   oss << "  \"camera_path\": \"" << opt.camera_path << "\",\n";
   oss << "  \"normalization_mode\": \"" << opt.normalization_mode << "\",\n";
   oss << "  \"opencv_threads\": " << opt.opencv_threads << ",\n";
-  oss << "  \"explicit_cpu_copy_count\": " << (copy_metrics.raw_copies.load() + copy_metrics.letterbox_copies.load() + copy_metrics.input_copies.load()) << ",\n";
-  oss << "  \"explicit_cpu_copy_bytes\": " << (copy_metrics.raw_bytes.load() + copy_metrics.letterbox_bytes.load() + copy_metrics.input_copy_bytes.load()) << ",\n";
+  oss << "  \"explicit_cpu_copy_count\": "
+      << (copy_metrics.raw_copies.load() + copy_metrics.letterbox_copies.load() +
+          copy_metrics.input_copies.load())
+      << ",\n";
+  oss << "  \"explicit_cpu_copy_bytes\": "
+      << (copy_metrics.raw_bytes.load() + copy_metrics.letterbox_bytes.load() +
+          copy_metrics.input_copy_bytes.load())
+      << ",\n";
   oss << "  \"raw_copy_bytes\": " << copy_metrics.raw_bytes.load() << ",\n";
   oss << "  \"letterbox_copy_bytes\": " << copy_metrics.letterbox_bytes.load() << ",\n";
   oss << "  \"host_input_submissions\": " << copy_metrics.host_submissions.load() << ",\n";
-  oss << "  \"host_input_submission_bytes\": " << copy_metrics.host_submission_bytes.load() << ",\n";
+  oss << "  \"host_input_submission_bytes\": " << copy_metrics.host_submission_bytes.load()
+      << ",\n";
   oss << "  \"normalization_output_bytes\": " << copy_metrics.normalization_bytes.load() << ",\n";
-  oss << "  \"input_copy_mode\": \"" << (opt.zero_copy_input ? "native_dma_fd" : "host_buffer") << "\",\n";
+  oss << "  \"input_copy_mode\": \"" << (opt.zero_copy_input ? "native_dma_fd" : "host_buffer")
+      << "\",\n";
   oss << "  \"use_affinity\": " << (opt.use_affinity ? "true" : "false") << ",\n";
   oss << "  \"affinity_profile\": \"" << opt.affinity_profile << "\",\n";
   oss << "  \"input_fps\": " << opt.input_fps << ",\n";
@@ -215,24 +239,28 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
     }
     first = false;
     const auto& pred = kv.second;
-    const std::string image_name = !pred.source_name.empty()
-                                       ? pred.source_name
-                                       : (pred.image_index >= 0 &&
-                                                  pred.image_index < static_cast<int>(image_paths.size())
-                                              ? Basename(image_paths[pred.image_index])
-                                              : std::to_string(pred.image_index));
+    const std::string image_name =
+        !pred.source_name.empty()
+            ? pred.source_name
+            : (pred.image_index >= 0 && pred.image_index < static_cast<int>(image_paths.size())
+                   ? Basename(image_paths[pred.image_index])
+                   : std::to_string(pred.image_index));
     oss << "    {\"image_index\": " << pred.image_index << ", \"image\": \""
         << JsonEscape(image_name) << "\", \"top1_label\": \"" << JsonEscape(pred.top1_label)
         << "\", \"mapped_category\": \"" << JsonEscape(pred.mapped_category)
-        << "\", \"score\": " << pred.score << ", \"is_unknown\": "
-        << (pred.is_unknown ? "true" : "false") << ", \"topk_labels\": [";
+        << "\", \"score\": " << pred.score
+        << ", \"is_unknown\": " << (pred.is_unknown ? "true" : "false") << ", \"topk_labels\": [";
     for (size_t i = 0; i < pred.topk_labels.size(); ++i) {
-      if (i > 0) oss << ", ";
+      if (i > 0) {
+        oss << ", ";
+      }
       oss << "\"" << JsonEscape(pred.topk_labels[i]) << "\"";
     }
     oss << "], \"topk_scores\": [";
     for (size_t i = 0; i < pred.topk_scores.size(); ++i) {
-      if (i > 0) oss << ", ";
+      if (i > 0) {
+        oss << ", ";
+      }
       oss << pred.topk_scores[i];
     }
     oss << "]}";
@@ -241,6 +269,5 @@ inline void PrintReport(const Options& opt, const Stats& stats, const std::vecto
   oss << "}\n";
   std::cout << oss.str();
 }
-
 
 }  // namespace yolo_clip

@@ -100,7 +100,11 @@ struct ClipTask {
 struct ClipSlot {
   std::vector<uint8_t> input_bytes;
   std::shared_ptr<camera_dma::DmaBuffer> dma;
-  uint8_t* Data() { return dma ? static_cast<uint8_t*>(dma->Data()) : input_bytes.data(); }
+
+  uint8_t* Data() {
+    return dma ? static_cast<uint8_t*>(dma->Data()) : input_bytes.data();
+  }
+
   bool valid = false;
 };
 
@@ -197,8 +201,12 @@ struct Stats {
     clip_queue_wait_ms_sum += ms;
   }
 
-  void AddCompleted(bool was_detected, double latency_ms, uint64_t checksum, int image_index,
-                    const std::string& source_name, const ClassificationResult& cls) {
+  void AddCompleted(bool was_detected,
+                    double latency_ms,
+                    uint64_t checksum,
+                    int image_index,
+                    const std::string& source_name,
+                    const ClassificationResult& cls) {
     completed.fetch_add(1);
     if (was_detected) {
       detected.fetch_add(1);
@@ -321,20 +329,32 @@ void PinThreadToCore(int core_id) {
 }
 
 int ProducerCore(const Options& opt) {
-  if (opt.affinity_profile == "legacy") return 7;
-  if (opt.affinity_profile == "segregated") return 4;
+  if (opt.affinity_profile == "legacy") {
+    return 7;
+  }
+  if (opt.affinity_profile == "segregated") {
+    return 4;
+  }
   return -1;
 }
 
 int YoloWorkerCore(const Options& opt, int worker_id) {
-  if (opt.affinity_profile == "legacy") return worker_id % 4;
-  if (opt.affinity_profile == "segregated") return 5 + (worker_id % 3);
+  if (opt.affinity_profile == "legacy") {
+    return worker_id % 4;
+  }
+  if (opt.affinity_profile == "segregated") {
+    return 5 + (worker_id % 3);
+  }
   return -1;
 }
 
 int ClipWorkerCore(const Options& opt, int worker_id) {
-  if (opt.affinity_profile == "legacy") return 4 + (worker_id % 4);
-  if (opt.affinity_profile == "segregated") return worker_id % 4;
+  if (opt.affinity_profile == "legacy") {
+    return 4 + (worker_id % 4);
+  }
+  if (opt.affinity_profile == "segregated") {
+    return worker_id % 4;
+  }
   return -1;
 }
 
@@ -390,7 +410,8 @@ template <typename T>
 // 实时有界队列，满时丢弃最旧待处理任务；旧实现的 on_drop 在锁内调用。
 class DropOldestQueue {
  public:
-  explicit DropOldestQueue(size_t capacity) : capacity_(capacity) {}
+  explicit DropOldestQueue(size_t capacity) : capacity_(capacity) {
+  }
 
   template <typename DropFn>
   void Push(T item, DropFn on_drop) {
@@ -409,7 +430,9 @@ class DropOldestQueue {
 
   bool Pop(T& item) {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+    cv_.wait(lock, [&] {
+      return closed_ || !queue_.empty();
+    });
     if (queue_.empty()) {
       return false;
     }
@@ -438,8 +461,11 @@ class ClipSlotPool {
  public:
   ClipSlotPool(int count, size_t bytes_per_slot, const std::string& heap = "") : slots_(count) {
     for (int i = 0; i < count; ++i) {
-      if (heap.empty()) slots_[i].input_bytes.resize(bytes_per_slot);
-      else slots_[i].dma = std::make_shared<camera_dma::DmaBuffer>(heap, bytes_per_slot);
+      if (heap.empty()) {
+        slots_[i].input_bytes.resize(bytes_per_slot);
+      } else {
+        slots_[i].dma = std::make_shared<camera_dma::DmaBuffer>(heap, bytes_per_slot);
+      }
       free_ids_.push(i);
     }
   }
@@ -460,7 +486,9 @@ class ClipSlotPool {
     free_ids_.push(slot_id);
   }
 
-  ClipSlot& Slot(int slot_id) { return slots_[slot_id]; }
+  ClipSlot& Slot(int slot_id) {
+    return slots_[slot_id];
+  }
 
  private:
   std::mutex mutex_;
@@ -588,7 +616,9 @@ class TextBank {
     }
   }
 
-  ClassificationResult Classify(const float* embedding, size_t count, int topk,
+  ClassificationResult Classify(const float* embedding,
+                                size_t count,
+                                int topk,
                                 float reject_threshold) const {
     if (dim_ == 0 || count != dim_) {
       throw std::runtime_error("embedding dim mismatch");
@@ -607,8 +637,9 @@ class TextBank {
       const float* text = features_.data() + row * dim_;
       scored.emplace_back(Dot(text, normalized.data(), dim_), static_cast<int>(row));
     }
-    std::sort(scored.begin(), scored.end(),
-              [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::sort(scored.begin(), scored.end(), [](const auto& a, const auto& b) {
+      return a.first > b.first;
+    });
 
     ClassificationResult result;
     const int k = std::min(topk, static_cast<int>(scored.size()));
@@ -665,8 +696,11 @@ rknn_core_mask ClipCoreMask(int worker_id, const std::string& mode) {
 class BaseRunner {
  public:
   BaseRunner() = default;
+
   ~BaseRunner() {
-    for (auto& entry : imported_inputs_) rknn_destroy_mem(ctx_, entry.second.memory);
+    for (auto& entry : imported_inputs_) {
+      rknn_destroy_mem(ctx_, entry.second.memory);
+    }
     imported_inputs_.clear();
     if (input_mem_ != nullptr) {
       rknn_destroy_mem(ctx_, input_mem_);
@@ -681,8 +715,11 @@ class BaseRunner {
   BaseRunner& operator=(const BaseRunner&) = delete;
 
   void InitFromModel(const std::vector<uint8_t>& model_bytes, rknn_core_mask core_mask) {
-    int ret = rknn_init(&ctx_, const_cast<uint8_t*>(model_bytes.data()),
-                        static_cast<uint32_t>(model_bytes.size()), 0, nullptr);
+    int ret = rknn_init(&ctx_,
+                        const_cast<uint8_t*>(model_bytes.data()),
+                        static_cast<uint32_t>(model_bytes.size()),
+                        0,
+                        nullptr);
     if (ret != RKNN_SUCC) {
       throw std::runtime_error("rknn_init failed: " + std::to_string(ret));
     }
@@ -699,30 +736,50 @@ class BaseRunner {
     PostInit(core_mask);
   }
 
-  rknn_context* MutableContext() { return &ctx_; }
-  void EnableIoMem(bool enabled) { use_io_mem_ = enabled; }
-  void EnableDirectInput(const std::string& heap) { direct_heap_ = heap; }
+  rknn_context* MutableContext() {
+    return &ctx_;
+  }
+
+  void EnableIoMem(bool enabled) {
+    use_io_mem_ = enabled;
+  }
+
+  void EnableDirectInput(const std::string& heap) {
+    direct_heap_ = heap;
+  }
+
   size_t InputAllocationBytes(size_t packed_bytes) const {
-    if (direct_heap_.empty()) return packed_bytes;
-    if (native_input_attr_.n_elems * sizeof(uint16_t) != packed_bytes)
+    if (direct_heap_.empty()) {
+      return packed_bytes;
+    }
+    if (native_input_attr_.n_elems * sizeof(uint16_t) != packed_bytes) {
       throw std::runtime_error("direct input tensor size does not match model");
+    }
     return std::max(packed_bytes, static_cast<size_t>(native_input_attr_.size_with_stride));
   }
+
   void RunDma(const std::shared_ptr<camera_dma::DmaBuffer>& buffer, double& run_ms) {
     auto found = imported_inputs_.find(buffer->Fd());
     if (found == imported_inputs_.end()) {
-      rknn_tensor_mem* mem = rknn_create_mem_from_fd(ctx_, buffer->Fd(), buffer->Data(),
-                                                  buffer->Size(), 0);
-      if (!mem) throw std::runtime_error("rknn_create_mem_from_fd failed");
+      rknn_tensor_mem* mem =
+          rknn_create_mem_from_fd(ctx_, buffer->Fd(), buffer->Data(), buffer->Size(), 0);
+      if (!mem) {
+        throw std::runtime_error("rknn_create_mem_from_fd failed");
+      }
       try {
         found = imported_inputs_.emplace(buffer->Fd(), ImportedInput{buffer, mem}).first;
-      } catch (...) { rknn_destroy_mem(ctx_, mem); throw; }
+      }
+      catch (...) {
+        rknn_destroy_mem(ctx_, mem);
+        throw;
+      }
     }
     rknn_tensor_attr attr = native_input_attr_;
     attr.pass_through = 1;
     const int ret = rknn_set_io_mem(ctx_, found->second.memory, &attr);
-    if (ret != RKNN_SUCC)
+    if (ret != RKNN_SUCC) {
       throw std::runtime_error("bind native DMA input failed: " + std::to_string(ret));
+    }
     RunRaw(nullptr, 0, RKNN_TENSOR_FLOAT16, RKNN_TENSOR_NHWC, run_ms, true);
   }
 
@@ -762,19 +819,25 @@ class BaseRunner {
     if (!direct_heap_.empty()) {
       native_input_attr_ = {};
       native_input_attr_.index = 0;
-      ret = rknn_query(ctx_, RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR, &native_input_attr_,
-                       sizeof(native_input_attr_));
+      ret = rknn_query(
+          ctx_, RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR, &native_input_attr_, sizeof(native_input_attr_));
       if (ret != RKNN_SUCC || native_input_attr_.type != RKNN_TENSOR_FLOAT16 ||
           native_input_attr_.fmt != RKNN_TENSOR_NHWC || native_input_attr_.n_dims != 4 ||
           native_input_attr_.dims[0] != 1 || native_input_attr_.dims[3] != 3 ||
           (native_input_attr_.w_stride != 0 &&
-           native_input_attr_.w_stride != native_input_attr_.dims[2]))
-        throw std::runtime_error("zero-copy requires packed native FP16 NHWC input; model layout unsupported");
+           native_input_attr_.w_stride != native_input_attr_.dims[2])) {
+        throw std::runtime_error(
+            "zero-copy requires packed native FP16 NHWC input; model layout unsupported");
+      }
     }
   }
 
-  void RunRaw(const uint8_t* input_buf, uint32_t input_size, rknn_tensor_type type,
-              rknn_tensor_format fmt, double& run_ms, bool already_bound = false) {
+  void RunRaw(const uint8_t* input_buf,
+              uint32_t input_size,
+              rknn_tensor_type type,
+              rknn_tensor_format fmt,
+              double& run_ms,
+              bool already_bound = false) {
     int ret = RKNN_SUCC;
     if (already_bound) {
       // CPU normalization already wrote directly into the imported native tensor.
@@ -853,10 +916,12 @@ class BaseRunner {
   bool initialized_ = false;
   std::string direct_heap_;
   rknn_tensor_attr native_input_attr_{};
+
   struct ImportedInput {
     std::shared_ptr<camera_dma::DmaBuffer> buffer;
     rknn_tensor_mem* memory;
   };
+
   std::map<int, ImportedInput> imported_inputs_;
   std::shared_ptr<camera_dma::DmaBuffer> direct_input_;
 };
@@ -872,7 +937,9 @@ void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool clip) {
     for (int x = 0; x < rgb.Width(); ++x) {
       for (int c = 0; c < 3; ++c) {
         float value = row[x * 3 + c] / 255.0f;
-        if (clip) value = (value - mean[c]) / stdv[c];
+        if (clip) {
+          value = (value - mean[c]) / stdv[c];
+        }
         *output++ = Float32ToFloat16(value);
       }
     }
@@ -883,15 +950,18 @@ void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool clip) {
 // 固定单类 [5,N] 输出协议，挑选最高置信框并还原到原图坐标；没有多目标 NMS。
 class YoloRunner : public BaseRunner {
  public:
-  explicit YoloRunner(bool use_rga) : use_rga_(use_rga) {}
+  explicit YoloRunner(bool use_rga) : use_rga_(use_rga) {
+  }
 
   YoloResult Run(const cv::Mat& image_bgr, float conf_threshold, double& preprocess_ms) {
     PrepareInput(image_bgr, preprocess_ms);
     return Infer(image_bgr.cols, image_bgr.rows, conf_threshold);
   }
 
-  YoloResult RunCamera(const camera_dma::Frame& frame, camera_dma::Preprocessor& prep,
-                      float conf_threshold, double& preprocess_ms) {
+  YoloResult RunCamera(const camera_dma::Frame& frame,
+                       camera_dma::Preprocessor& prep,
+                       float conf_threshold,
+                       double& preprocess_ms) {
     const auto start = Clock::now();
     const int width = frame.owner->Width(), height = frame.owner->Height();
     letterbox_scale_ = 640.0f / std::max(width, height);
@@ -899,9 +969,13 @@ class YoloRunner : public BaseRunner {
     auto& rgb = prep.YoloRgb();
     uint8_t* destination = InputStorage();
     std::unique_ptr<camera_dma::CpuAccess> write;
-    if (direct_input_) write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    if (direct_input_) {
+      write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    }
     PackRgbFp16(rgb, destination, false);
-    if (write) write->Finish();
+    if (write) {
+      write->Finish();
+    }
     preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     return Infer(width, height, conf_threshold);
   }
@@ -910,8 +984,10 @@ class YoloRunner : public BaseRunner {
   uint8_t* InputStorage() {
     const size_t bytes = 640 * 640 * 3 * sizeof(uint16_t);
     if (!direct_heap_.empty()) {
-      if (!direct_input_) direct_input_ = std::make_shared<camera_dma::DmaBuffer>(
-          direct_heap_, InputAllocationBytes(bytes));
+      if (!direct_input_) {
+        direct_input_ =
+            std::make_shared<camera_dma::DmaBuffer>(direct_heap_, InputAllocationBytes(bytes));
+      }
       return static_cast<uint8_t*>(direct_input_->Data());
     }
     input_bytes_.resize(bytes);
@@ -920,9 +996,15 @@ class YoloRunner : public BaseRunner {
 
   YoloResult Infer(int width, int height, float conf_threshold) {
     double run_ms = 0.0;
-    if (direct_input_) RunDma(direct_input_, run_ms);
-    else RunRaw(input_bytes_.data(), static_cast<uint32_t>(input_bytes_.size()),
-                RKNN_TENSOR_FLOAT16, RKNN_TENSOR_NHWC, run_ms);
+    if (direct_input_) {
+      RunDma(direct_input_, run_ms);
+    } else {
+      RunRaw(input_bytes_.data(),
+             static_cast<uint32_t>(input_bytes_.size()),
+             RKNN_TENSOR_FLOAT16,
+             RKNN_TENSOR_NHWC,
+             run_ms);
+    }
 
     YoloResult result;
     result.run_ms = run_ms;
@@ -1000,7 +1082,9 @@ class YoloRunner : public BaseRunner {
 
     auto* dst = reinterpret_cast<uint16_t*>(InputStorage());
     std::unique_ptr<camera_dma::CpuAccess> write;
-    if (direct_input_) write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    if (direct_input_) {
+      write = std::make_unique<camera_dma::CpuAccess>(*direct_input_, DMA_BUF_SYNC_WRITE);
+    }
     for (int y = 0; y < 640; ++y) {
       for (int x = 0; x < 640; ++x) {
         for (int c = 0; c < 3; ++c) {
@@ -1009,9 +1093,10 @@ class YoloRunner : public BaseRunner {
         }
       }
     }
-    if (write) write->Finish();
-    preprocess_ms =
-        std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
+    if (write) {
+      write->Finish();
+    }
+    preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
   }
 
   bool use_rga_ = false;
@@ -1026,9 +1111,12 @@ class YoloRunner : public BaseRunner {
 // ROI 直接 resize224、BGR→RGB、按 CLIP 均值方差归一化，最后写 FP16 NHWC。
 class ClipPreprocessor {
  public:
-  explicit ClipPreprocessor(bool use_rga) : use_rga_(use_rga) {}
+  explicit ClipPreprocessor(bool use_rga) : use_rga_(use_rga) {
+  }
 
-  static constexpr size_t InputBytes() { return 1 * 224 * 224 * 3 * sizeof(uint16_t); }
+  static constexpr size_t InputBytes() {
+    return 1 * 224 * 224 * 3 * sizeof(uint16_t);
+  }
 
   void PrepareInput(const cv::Mat& image_bgr, uint8_t* dst_bytes, double& preprocess_ms) {
     const auto prep_start = Clock::now();
@@ -1066,8 +1154,7 @@ class ClipPreprocessor {
         }
       }
     }
-    preprocess_ms =
-        std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
+    preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
   }
 
  private:
@@ -1079,14 +1166,25 @@ class ClipPreprocessor {
 // 只运行图像编码器；文本侧不逐帧运行模型，而是查离线特征库。
 class ClipRunner : public BaseRunner {
  public:
-  size_t InputBytes() const { return ClipPreprocessor::InputBytes(); }
-  size_t OutputCount() const { return output_float_.size(); }
-  const float* OutputData() const { return output_float_.data(); }
+  size_t InputBytes() const {
+    return ClipPreprocessor::InputBytes();
+  }
+
+  size_t OutputCount() const {
+    return output_float_.size();
+  }
+
+  const float* OutputData() const {
+    return output_float_.data();
+  }
 
   ClipResult RunPrepared(const uint8_t* prepared_bytes) {
     double run_ms = 0.0;
-    RunRaw(prepared_bytes, static_cast<uint32_t>(InputBytes()), RKNN_TENSOR_FLOAT16,
-           RKNN_TENSOR_NHWC, run_ms);
+    RunRaw(prepared_bytes,
+           static_cast<uint32_t>(InputBytes()),
+           RKNN_TENSOR_FLOAT16,
+           RKNN_TENSOR_NHWC,
+           run_ms);
     ClipResult result;
     result.run_ms = run_ms;
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
@@ -1099,7 +1197,6 @@ class ClipRunner : public BaseRunner {
     result.checksum = ChecksumFloat(output_float_.data(), output_float_.size());
     return result;
   }
-
 };
 
 Options ParseArgs(int argc, char** argv) {
@@ -1113,52 +1210,81 @@ Options ParseArgs(int argc, char** argv) {
       ++i;
       return argv[i];
     };
-    if (arg == "--yolo") opt.yolo_model_path = next(arg);
-    else if (arg == "--clip") opt.clip_model_path = next(arg);
-    else if (arg == "--images") opt.image_dir = next(arg);
-    else if (arg == "--video") opt.video_path = next(arg);
-    else if (arg == "--camera") opt.camera_device = next(arg);
-    else if (arg == "--camera-format") opt.camera_format = next(arg);
-    else if (arg == "--camera-width") opt.camera_width = std::stoi(next(arg));
-    else if (arg == "--camera-height") opt.camera_height = std::stoi(next(arg));
-    else if (arg == "--camera-buffers") opt.camera_buffers = std::stoi(next(arg));
-    else if (arg == "--dma-heap") opt.dma_heap = next(arg);
-    else if (arg == "--zero-copy-input") opt.zero_copy_input = true;
-    else if (arg == "--label-tsv") opt.label_tsv_path = next(arg);
-    else if (arg == "--text-features") opt.text_feature_path = next(arg);
-    else if (arg == "--duration") opt.duration_sec = std::stoi(next(arg));
-    else if (arg == "--fps") opt.input_fps = std::stod(next(arg));
-    else if (arg == "--frame-queue") opt.frame_queue = std::stoi(next(arg));
-    else if (arg == "--clip-queue") opt.clip_queue = std::stoi(next(arg));
-    else if (arg == "--clip-buffers") opt.clip_buffers = std::stoi(next(arg));
-    else if (arg == "--yolo-threads") opt.yolo_threads = std::stoi(next(arg));
-    else if (arg == "--clip-threads") opt.clip_threads = std::stoi(next(arg));
-    else if (arg == "--clip-core-mode") opt.clip_core_mode = next(arg);
-    else if (arg == "--topk") opt.topk = std::stoi(next(arg));
-    else if (arg == "--reject") opt.reject_threshold = std::stof(next(arg));
-    else if (arg == "--preprocess") opt.preprocess_backend = next(arg);
-    else if (arg == "--io-mem") opt.use_io_mem = true;
-    else if (arg == "--affinity") {
+    if (arg == "--yolo") {
+      opt.yolo_model_path = next(arg);
+    } else if (arg == "--clip") {
+      opt.clip_model_path = next(arg);
+    } else if (arg == "--images") {
+      opt.image_dir = next(arg);
+    } else if (arg == "--video") {
+      opt.video_path = next(arg);
+    } else if (arg == "--camera") {
+      opt.camera_device = next(arg);
+    } else if (arg == "--camera-format") {
+      opt.camera_format = next(arg);
+    } else if (arg == "--camera-width") {
+      opt.camera_width = std::stoi(next(arg));
+    } else if (arg == "--camera-height") {
+      opt.camera_height = std::stoi(next(arg));
+    } else if (arg == "--camera-buffers") {
+      opt.camera_buffers = std::stoi(next(arg));
+    } else if (arg == "--dma-heap") {
+      opt.dma_heap = next(arg);
+    } else if (arg == "--zero-copy-input") {
+      opt.zero_copy_input = true;
+    } else if (arg == "--label-tsv") {
+      opt.label_tsv_path = next(arg);
+    } else if (arg == "--text-features") {
+      opt.text_feature_path = next(arg);
+    } else if (arg == "--duration") {
+      opt.duration_sec = std::stoi(next(arg));
+    } else if (arg == "--fps") {
+      opt.input_fps = std::stod(next(arg));
+    } else if (arg == "--frame-queue") {
+      opt.frame_queue = std::stoi(next(arg));
+    } else if (arg == "--clip-queue") {
+      opt.clip_queue = std::stoi(next(arg));
+    } else if (arg == "--clip-buffers") {
+      opt.clip_buffers = std::stoi(next(arg));
+    } else if (arg == "--yolo-threads") {
+      opt.yolo_threads = std::stoi(next(arg));
+    } else if (arg == "--clip-threads") {
+      opt.clip_threads = std::stoi(next(arg));
+    } else if (arg == "--clip-core-mode") {
+      opt.clip_core_mode = next(arg);
+    } else if (arg == "--topk") {
+      opt.topk = std::stoi(next(arg));
+    } else if (arg == "--reject") {
+      opt.reject_threshold = std::stof(next(arg));
+    } else if (arg == "--preprocess") {
+      opt.preprocess_backend = next(arg);
+    } else if (arg == "--io-mem") {
+      opt.use_io_mem = true;
+    } else if (arg == "--affinity") {
       opt.use_affinity = true;
       opt.affinity_profile = "legacy";
-    }
-    else if (arg == "--affinity-profile") {
+    } else if (arg == "--affinity-profile") {
       opt.affinity_profile = next(arg);
       opt.use_affinity = opt.affinity_profile != "none";
+    } else if (arg == "--fallback-full-image") {
+      opt.fallback_full_image = true;
+    } else if (arg == "--conf") {
+      opt.yolo_conf_threshold = std::stof(next(arg));
+    } else if (arg == "--serial") {
+      opt.serial = true;
+    } else {
+      throw std::runtime_error("unknown arg: " + arg);
     }
-    else if (arg == "--fallback-full-image") opt.fallback_full_image = true;
-    else if (arg == "--conf") opt.yolo_conf_threshold = std::stof(next(arg));
-    else if (arg == "--serial") opt.serial = true;
-    else throw std::runtime_error("unknown arg: " + arg);
   }
   const bool has_image_dir = !opt.image_dir.empty();
   const bool has_video = !opt.video_path.empty();
   const bool has_camera = !opt.camera_device.empty();
   if (static_cast<int>(has_image_dir) + has_video + has_camera != 1) {
-    throw std::runtime_error("provide exactly one of --images DIR, --video FILE, or --camera /dev/videoN");
+    throw std::runtime_error(
+        "provide exactly one of --images DIR, --video FILE, or --camera /dev/videoN");
   }
-  if (opt.yolo_model_path.empty() || opt.clip_model_path.empty() ||
-      opt.label_tsv_path.empty() || opt.text_feature_path.empty()) {
+  if (opt.yolo_model_path.empty() || opt.clip_model_path.empty() || opt.label_tsv_path.empty() ||
+      opt.text_feature_path.empty()) {
     throw std::runtime_error(
         "usage: yolo_clip_pipeline_bench --yolo YOLO.rknn --clip CLIP.rknn (--images DIR | --video FILE | --camera DEVICE) "
         "--label-tsv LABELS.tsv --text-features FEATURES.f32 "
@@ -1173,7 +1299,8 @@ Options ParseArgs(int argc, char** argv) {
   if (opt.duration_sec <= 0 || !std::isfinite(opt.input_fps) || opt.input_fps <= 0.0 ||
       opt.frame_queue <= 0 || opt.clip_queue <= 0 || opt.clip_buffers <= 0 ||
       opt.yolo_threads <= 0 || opt.clip_threads <= 0 || opt.topk <= 0) {
-    throw std::runtime_error("duration, fps, queue sizes, buffer count, thread counts, and topk must be positive");
+    throw std::runtime_error(
+        "duration, fps, queue sizes, buffer count, thread counts, and topk must be positive");
   }
   if (opt.preprocess_backend != "opencv" && opt.preprocess_backend != "rga") {
     throw std::runtime_error("--preprocess must be opencv or rga");
@@ -1188,20 +1315,26 @@ Options ParseArgs(int argc, char** argv) {
   }
   if (opt.camera_width <= 0 || opt.camera_width > 8192 || opt.camera_height <= 0 ||
       opt.camera_height > 8192 || opt.camera_buffers < 3 || opt.camera_buffers > 64 ||
-      (opt.camera_format != "YUYV" && opt.camera_format != "NV12") || opt.input_fps > 1000.0)
+      (opt.camera_format != "YUYV" && opt.camera_format != "NV12") || opt.input_fps > 1000.0) {
     throw std::runtime_error("invalid camera size, buffer count, format, or FPS");
+  }
   if (has_camera) {
-    if (opt.input_fps < 0.001) throw std::runtime_error("camera FPS must be >= 0.001");
+    if (opt.input_fps < 0.001) {
+      throw std::runtime_error("camera FPS must be >= 0.001");
+    }
     const int minimum = opt.frame_queue + (opt.serial ? 1 : opt.yolo_threads) + 2;
-    if (opt.camera_buffers < minimum)
+    if (opt.camera_buffers < minimum) {
       throw std::runtime_error("--camera-buffers must be >= frame-queue + YOLO workers + 2");
+    }
     opt.preprocess_backend = "rga";
     opt.zero_copy_input = true;
   }
   return opt;
 }
 
-void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::string>& image_paths,
+void PrintReport(const Options& opt,
+                 const Stats& stats,
+                 const std::vector<std::string>& image_paths,
                  double wall_ms) {
   const int completed = stats.completed.load();
   const int skipped_no_object = stats.skipped_no_object.load();
@@ -1224,16 +1357,24 @@ void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::
   std::map<int, SamplePrediction> sample_predictions;
   {
     std::lock_guard<std::mutex> lock(stats.accum_mutex);
-    if (yolo_runs > 0) yolo_mean = stats.yolo_run_ms_sum / yolo_runs;
-    if (clip_runs > 0) clip_mean = stats.clip_run_ms_sum / clip_runs;
+    if (yolo_runs > 0) {
+      yolo_mean = stats.yolo_run_ms_sum / yolo_runs;
+    }
+    if (clip_runs > 0) {
+      clip_mean = stats.clip_run_ms_sum / clip_runs;
+    }
     if (stats.yolo_preprocess_runs.load() > 0) {
       yolo_pre_mean = stats.yolo_preprocess_ms_sum / stats.yolo_preprocess_runs.load();
     }
     if (stats.clip_preprocess_runs.load() > 0) {
       clip_pre_mean = stats.clip_preprocess_ms_sum / stats.clip_preprocess_runs.load();
     }
-    if (yolo_runs > 0) yolo_queue_wait_mean = stats.yolo_queue_wait_ms_sum / yolo_runs;
-    if (clip_runs > 0) clip_queue_wait_mean = stats.clip_queue_wait_ms_sum / clip_runs;
+    if (yolo_runs > 0) {
+      yolo_queue_wait_mean = stats.yolo_queue_wait_ms_sum / yolo_runs;
+    }
+    if (clip_runs > 0) {
+      clip_queue_wait_mean = stats.clip_queue_wait_ms_sum / clip_runs;
+    }
     if (completed > 0) {
       latency_mean = stats.latency_ms_sum / completed;
       latency_min = stats.latency_ms_min;
@@ -1255,7 +1396,8 @@ void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::
   oss << "  \"zero_copy_input\": " << (opt.zero_copy_input ? "true" : "false") << ",\n";
   oss << "  \"camera_device\": \"" << JsonEscape(opt.camera_device) << "\",\n";
   oss << "  \"camera_format\": \"" << opt.camera_format << "\",\n";
-  oss << "  \"input_copy_mode\": \"" << (opt.zero_copy_input ? "native_dma_fd" : "host_buffer") << "\",\n";
+  oss << "  \"input_copy_mode\": \"" << (opt.zero_copy_input ? "native_dma_fd" : "host_buffer")
+      << "\",\n";
   oss << "  \"use_affinity\": " << (opt.use_affinity ? "true" : "false") << ",\n";
   oss << "  \"affinity_profile\": \"" << opt.affinity_profile << "\",\n";
   oss << "  \"input_fps\": " << opt.input_fps << ",\n";
@@ -1295,24 +1437,28 @@ void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::
     }
     first = false;
     const auto& pred = kv.second;
-    const std::string image_name = !pred.source_name.empty()
-                                       ? pred.source_name
-                                       : (pred.image_index >= 0 &&
-                                                  pred.image_index < static_cast<int>(image_paths.size())
-                                              ? Basename(image_paths[pred.image_index])
-                                              : std::to_string(pred.image_index));
+    const std::string image_name =
+        !pred.source_name.empty()
+            ? pred.source_name
+            : (pred.image_index >= 0 && pred.image_index < static_cast<int>(image_paths.size())
+                   ? Basename(image_paths[pred.image_index])
+                   : std::to_string(pred.image_index));
     oss << "    {\"image_index\": " << pred.image_index << ", \"image\": \""
         << JsonEscape(image_name) << "\", \"top1_label\": \"" << JsonEscape(pred.top1_label)
         << "\", \"mapped_category\": \"" << JsonEscape(pred.mapped_category)
-        << "\", \"score\": " << pred.score << ", \"is_unknown\": "
-        << (pred.is_unknown ? "true" : "false") << ", \"topk_labels\": [";
+        << "\", \"score\": " << pred.score
+        << ", \"is_unknown\": " << (pred.is_unknown ? "true" : "false") << ", \"topk_labels\": [";
     for (size_t i = 0; i < pred.topk_labels.size(); ++i) {
-      if (i > 0) oss << ", ";
+      if (i > 0) {
+        oss << ", ";
+      }
       oss << "\"" << JsonEscape(pred.topk_labels[i]) << "\"";
     }
     oss << "], \"topk_scores\": [";
     for (size_t i = 0; i < pred.topk_scores.size(); ++i) {
-      if (i > 0) oss << ", ";
+      if (i > 0) {
+        oss << ", ";
+      }
       oss << pred.topk_scores[i];
     }
     oss << "]}";
@@ -1326,43 +1472,64 @@ void PrintReport(const Options& opt, const Stats& stats, const std::vector<std::
 class ThreadFailure {
  public:
   std::atomic<bool> stopped{false};
+
   template <typename Work, typename Wake>
   void Guard(Work work, Wake wake) noexcept {
-    try { work(); }
+    try {
+      work();
+    }
     catch (...) {
       {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!error_) error_ = std::current_exception();
+        if (!error_) {
+          error_ = std::current_exception();
+        }
       }
       stopped.store(true);
       wake();
     }
   }
+
   void Rethrow() {
-    if (error_) std::rethrow_exception(error_);
+    if (error_) {
+      std::rethrow_exception(error_);
+    }
   }
+
  private:
   std::mutex mutex_;
   std::exception_ptr error_;
 };
 
 std::shared_ptr<camera_dma::V4l2Capture> OpenCamera(const Options& opt) {
-  if (opt.camera_device.empty()) return nullptr;
-  auto camera = camera_dma::V4l2Capture::Open(opt.camera_device, opt.camera_width,
-      opt.camera_height, opt.camera_format, opt.camera_buffers, opt.input_fps,
-      opt.frame_queue + (opt.serial ? 1 : opt.yolo_threads) + 2);
+  if (opt.camera_device.empty()) {
+    return nullptr;
+  }
+  auto camera =
+      camera_dma::V4l2Capture::Open(opt.camera_device,
+                                    opt.camera_width,
+                                    opt.camera_height,
+                                    opt.camera_format,
+                                    opt.camera_buffers,
+                                    opt.input_fps,
+                                    opt.frame_queue + (opt.serial ? 1 : opt.yolo_threads) + 2);
   std::cerr << "V4L2: " << camera->Description() << '\n';
   return camera;
 }
 
-void ProduceCamera(const Options& opt, const std::shared_ptr<camera_dma::V4l2Capture>& camera,
-                   DropOldestQueue<FrameTask>& queue, Stats& stats, Clock::time_point start,
+void ProduceCamera(const Options& opt,
+                   const std::shared_ptr<camera_dma::V4l2Capture>& camera,
+                   DropOldestQueue<FrameTask>& queue,
+                   Stats& stats,
+                   Clock::time_point start,
                    const ThreadFailure& failure) {
   const auto deadline = start + std::chrono::seconds(opt.duration_sec);
   int sequence = 0;
   while (!failure.stopped.load() && Clock::now() < deadline) {
     auto frame = camera->Acquire();
-    if (!frame) continue;
+    if (!frame) {
+      continue;
+    }
     FrameTask task;
     task.seq = sequence++;
     task.image_index = -1;
@@ -1370,150 +1537,197 @@ void ProduceCamera(const Options& opt, const std::shared_ptr<camera_dma::V4l2Cap
     task.capture_time = Clock::now();
     task.camera_frame = std::move(frame);
     stats.generated.fetch_add(1);
-    queue.Push(std::move(task), [&](const FrameTask&) { stats.frame_dropped.fetch_add(1); });
+    queue.Push(std::move(task), [&](const FrameTask&) {
+      stats.frame_dropped.fetch_add(1);
+    });
   }
-  if (!failure.stopped.load() && sequence == 0)
+  if (!failure.stopped.load() && sequence == 0) {
     throw std::runtime_error("camera produced no valid frames within duration");
+  }
 }
 
-void PrepareClipTask(const FrameTask& task, const cv::Rect& roi, ClipPreprocessor& cpu,
-                     camera_dma::Preprocessor& hardware, uint8_t* destination,
-                     const std::shared_ptr<camera_dma::DmaBuffer>& dma, double& elapsed_ms) {
+void PrepareClipTask(const FrameTask& task,
+                     const cv::Rect& roi,
+                     ClipPreprocessor& cpu,
+                     camera_dma::Preprocessor& hardware,
+                     uint8_t* destination,
+                     const std::shared_ptr<camera_dma::DmaBuffer>& dma,
+                     double& elapsed_ms) {
   const auto start = Clock::now();
   std::unique_ptr<camera_dma::CpuAccess> write;
-  if (dma) write = std::make_unique<camera_dma::CpuAccess>(*dma, DMA_BUF_SYNC_WRITE);
+  if (dma) {
+    write = std::make_unique<camera_dma::CpuAccess>(*dma, DMA_BUF_SYNC_WRITE);
+  }
   if (task.camera_frame) {
     auto& rgb = hardware.ClipRgb(roi.x, roi.y, roi.width, roi.height);
     PackRgbFp16(rgb, destination, true);
   } else {
     cpu.PrepareInput((*task.frame)(roi), destination, elapsed_ms);
   }
-  if (write) write->Finish();
+  if (write) {
+    write->Finish();
+  }
   elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 }
 
 // 串行基线：输入生产独立进行，检测、ROI 预处理、分类在单 worker 内顺序执行。
-void RunSerial(const Options& opt, const std::vector<cv::Mat>& images,
-               const std::vector<std::string>& image_paths, const TextBank& text_bank,
-               const std::vector<uint8_t>& yolo_model, const std::vector<uint8_t>& clip_model) {
+void RunSerial(const Options& opt,
+               const std::vector<cv::Mat>& images,
+               const std::vector<std::string>& image_paths,
+               const TextBank& text_bank,
+               const std::vector<uint8_t>& yolo_model,
+               const std::vector<uint8_t>& clip_model) {
   Stats stats;
   DropOldestQueue<FrameTask> frame_queue(static_cast<size_t>(opt.frame_queue));
   const bool use_rga = opt.preprocess_backend == "rga";
 
   auto camera = OpenCamera(opt);
   ThreadFailure failure;
-  auto wake = [&]() { frame_queue.Close(); };
+  auto wake = [&]() {
+    frame_queue.Close();
+  };
   camera_dma::Preprocessor hardware(opt.dma_heap);
 
   YoloRunner yolo(use_rga);
   yolo.EnableIoMem(opt.use_io_mem);
-  if (opt.zero_copy_input) yolo.EnableDirectInput(opt.dma_heap);
+  if (opt.zero_copy_input) {
+    yolo.EnableDirectInput(opt.dma_heap);
+  }
   yolo.InitFromModel(yolo_model, RKNN_NPU_CORE_AUTO);
   ClipRunner clip;
   clip.EnableIoMem(opt.use_io_mem);
-  if (opt.zero_copy_input) clip.EnableDirectInput(opt.dma_heap);
+  if (opt.zero_copy_input) {
+    clip.EnableDirectInput(opt.dma_heap);
+  }
   clip.InitFromModel(clip_model, RKNN_NPU_CORE_AUTO);
   ClipPreprocessor clip_preprocessor(use_rga);
   std::vector<uint8_t> clip_input(clip.InputBytes());
   std::shared_ptr<camera_dma::DmaBuffer> clip_dma;
-  if (opt.zero_copy_input) clip_dma = std::make_shared<camera_dma::DmaBuffer>(
-      opt.dma_heap, clip.InputAllocationBytes(clip.InputBytes()));
+  if (opt.zero_copy_input) {
+    clip_dma = std::make_shared<camera_dma::DmaBuffer>(
+        opt.dma_heap, clip.InputAllocationBytes(clip.InputBytes()));
+  }
 
-  if (camera) camera->Start();
+  if (camera) {
+    camera->Start();
+  }
   const auto wall_start = Clock::now();
   std::thread producer([&]() {
-    failure.Guard([&]() {
-    PinThreadToCore(ProducerCore(opt));
-    if (camera) {
-      ProduceCamera(opt, camera, frame_queue, stats, wall_start, failure);
-      return;
-    }
-    const int total_frames = static_cast<int>(opt.duration_sec * opt.input_fps);
-    const auto interval = std::chrono::duration<double>(1.0 / opt.input_fps);
-    cv::VideoCapture cap;
-    if (!opt.video_path.empty()) {
-      cap = OpenVideo(opt.video_path);
-    }
-    for (int i = 0; i < total_frames && !failure.stopped.load(); ++i) {
-      const auto target_time = wall_start + std::chrono::duration_cast<Clock::duration>(interval * i);
-      std::this_thread::sleep_until(target_time);
-      FrameTask task;
-      task.seq = i;
-      if (!opt.video_path.empty()) {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
-          cap.release();
-          cap = OpenVideo(opt.video_path);
-          if (!cap.read(frame) || frame.empty()) {
-            throw std::runtime_error("failed to loop video input");
+    failure.Guard(
+        [&]() {
+          PinThreadToCore(ProducerCore(opt));
+          if (camera) {
+            ProduceCamera(opt, camera, frame_queue, stats, wall_start, failure);
+            return;
           }
-        }
-        task.image_index = -1;
-        task.source_name = "video_frame";
-        task.frame = std::make_shared<cv::Mat>(frame.clone());
-      } else {
-        task.image_index = i % static_cast<int>(images.size());
-        task.source_name = Basename(image_paths[task.image_index]);
-        task.frame = std::make_shared<cv::Mat>(images[task.image_index]);
-      }
-      task.capture_time = Clock::now();
-      stats.generated.fetch_add(1);
-      frame_queue.Push(std::move(task), [&](const FrameTask&) { stats.frame_dropped.fetch_add(1); });
-    }
-    }, wake);
+          const int total_frames = static_cast<int>(opt.duration_sec * opt.input_fps);
+          const auto interval = std::chrono::duration<double>(1.0 / opt.input_fps);
+          cv::VideoCapture cap;
+          if (!opt.video_path.empty()) {
+            cap = OpenVideo(opt.video_path);
+          }
+          for (int i = 0; i < total_frames && !failure.stopped.load(); ++i) {
+            const auto target_time =
+                wall_start + std::chrono::duration_cast<Clock::duration>(interval * i);
+            std::this_thread::sleep_until(target_time);
+            FrameTask task;
+            task.seq = i;
+            if (!opt.video_path.empty()) {
+              cv::Mat frame;
+              if (!cap.read(frame) || frame.empty()) {
+                cap.release();
+                cap = OpenVideo(opt.video_path);
+                if (!cap.read(frame) || frame.empty()) {
+                  throw std::runtime_error("failed to loop video input");
+                }
+              }
+              task.image_index = -1;
+              task.source_name = "video_frame";
+              task.frame = std::make_shared<cv::Mat>(frame.clone());
+            } else {
+              task.image_index = i % static_cast<int>(images.size());
+              task.source_name = Basename(image_paths[task.image_index]);
+              task.frame = std::make_shared<cv::Mat>(images[task.image_index]);
+            }
+            task.capture_time = Clock::now();
+            stats.generated.fetch_add(1);
+            frame_queue.Push(std::move(task), [&](const FrameTask&) {
+              stats.frame_dropped.fetch_add(1);
+            });
+          }
+        },
+        wake);
     frame_queue.Close();
   });
 
   std::thread worker([&]() {
-    failure.Guard([&]() {
-    PinThreadToCore(YoloWorkerCore(opt, 0));
-    FrameTask task;
-    while (!failure.stopped.load() && frame_queue.Pop(task)) {
-      stats.AddYoloQueueWait(
-          std::chrono::duration<double, std::milli>(Clock::now() - task.capture_time).count());
-      double yolo_pre_ms = 0.0;
-      const YoloResult yolo_result = task.camera_frame ?
-          yolo.RunCamera(*task.camera_frame, hardware, opt.yolo_conf_threshold, yolo_pre_ms) :
-          yolo.Run(*task.frame, opt.yolo_conf_threshold, yolo_pre_ms);
-      stats.AddYoloPreprocess(yolo_pre_ms);
-      stats.AddYoloRun(yolo_result.run_ms);
+    failure.Guard(
+        [&]() {
+          PinThreadToCore(YoloWorkerCore(opt, 0));
+          FrameTask task;
+          while (!failure.stopped.load() && frame_queue.Pop(task)) {
+            stats.AddYoloQueueWait(
+                std::chrono::duration<double, std::milli>(Clock::now() - task.capture_time)
+                    .count());
+            double yolo_pre_ms = 0.0;
+            const YoloResult yolo_result =
+                task.camera_frame
+                    ? yolo.RunCamera(
+                          *task.camera_frame, hardware, opt.yolo_conf_threshold, yolo_pre_ms)
+                    : yolo.Run(*task.frame, opt.yolo_conf_threshold, yolo_pre_ms);
+            stats.AddYoloPreprocess(yolo_pre_ms);
+            stats.AddYoloRun(yolo_result.run_ms);
 
-      if (!yolo_result.detected && !opt.fallback_full_image) {
-        stats.skipped_no_object.fetch_add(1);
-        continue;
-      }
+            if (!yolo_result.detected && !opt.fallback_full_image) {
+              stats.skipped_no_object.fetch_add(1);
+              continue;
+            }
 
-      double clip_pre_ms = 0.0;
-      PrepareClipTask(task, yolo_result.roi, clip_preprocessor, hardware,
-          clip_dma ? static_cast<uint8_t*>(clip_dma->Data()) : clip_input.data(), clip_dma, clip_pre_ms);
-      task.camera_frame.reset();
-      stats.AddClipPreprocess(clip_pre_ms);
-      const ClipResult clip_result = clip_dma ? clip.RunPreparedDma(clip_dma) :
-                                               clip.RunPrepared(clip_input.data());
-      stats.AddClipRun(clip_result.run_ms);
-      const ClassificationResult cls =
-          text_bank.Classify(clip.OutputData(), clip.OutputCount(), opt.topk, opt.reject_threshold);
+            double clip_pre_ms = 0.0;
+            PrepareClipTask(task,
+                            yolo_result.roi,
+                            clip_preprocessor,
+                            hardware,
+                            clip_dma ? static_cast<uint8_t*>(clip_dma->Data()) : clip_input.data(),
+                            clip_dma,
+                            clip_pre_ms);
+            task.camera_frame.reset();
+            stats.AddClipPreprocess(clip_pre_ms);
+            const ClipResult clip_result =
+                clip_dma ? clip.RunPreparedDma(clip_dma) : clip.RunPrepared(clip_input.data());
+            stats.AddClipRun(clip_result.run_ms);
+            const ClassificationResult cls = text_bank.Classify(
+                clip.OutputData(), clip.OutputCount(), opt.topk, opt.reject_threshold);
 
-      const auto now = Clock::now();
-      const double latency_ms =
-          std::chrono::duration<double, std::milli>(now - task.capture_time).count();
-      stats.AddCompleted(yolo_result.detected, latency_ms, clip_result.checksum, task.image_index,
-                         task.source_name, cls);
-    }
-    }, wake);
+            const auto now = Clock::now();
+            const double latency_ms =
+                std::chrono::duration<double, std::milli>(now - task.capture_time).count();
+            stats.AddCompleted(yolo_result.detected,
+                               latency_ms,
+                               clip_result.checksum,
+                               task.image_index,
+                               task.source_name,
+                               cls);
+          }
+        },
+        wake);
   });
 
   producer.join();
   worker.join();
   failure.Rethrow();
   const auto wall_end = Clock::now();
-  PrintReport(opt, stats, image_paths,
+  PrintReport(opt,
+              stats,
+              image_paths,
               std::chrono::duration<double, std::milli>(wall_end - wall_start).count());
 }
 
 // 两级队列分别连接生产者、YOLO 线程池和 CLIP 线程池，实现不同帧之间的阶段重叠。
-void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
-             const std::vector<std::string>& image_paths, const TextBank& text_bank,
+void RunPool(const Options& opt,
+             const std::vector<cv::Mat>& images,
+             const std::vector<std::string>& image_paths,
+             const TextBank& text_bank,
              const std::vector<uint8_t>& yolo_model,
              const std::vector<uint8_t>& clip_model) {
   Stats stats;
@@ -1522,19 +1736,26 @@ void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
   const bool use_rga = opt.preprocess_backend == "rga";
   auto camera = OpenCamera(opt);
   ThreadFailure failure;
-  auto wake = [&]() { frame_queue.Close(); clip_queue.Close(); };
+  auto wake = [&]() {
+    frame_queue.Close();
+    clip_queue.Close();
+  };
 
   std::vector<std::unique_ptr<YoloRunner>> yolo_workers;
   yolo_workers.reserve(opt.yolo_threads);
   auto yolo_root = std::make_unique<YoloRunner>(use_rga);
   yolo_root->EnableIoMem(opt.use_io_mem);
-  if (opt.zero_copy_input) yolo_root->EnableDirectInput(opt.dma_heap);
+  if (opt.zero_copy_input) {
+    yolo_root->EnableDirectInput(opt.dma_heap);
+  }
   yolo_root->InitFromModel(yolo_model, YoloCoreMask(0));
   yolo_workers.push_back(std::move(yolo_root));
   for (int i = 1; i < opt.yolo_threads; ++i) {
     auto runner = std::make_unique<YoloRunner>(use_rga);
     runner->EnableIoMem(opt.use_io_mem);
-    if (opt.zero_copy_input) runner->EnableDirectInput(opt.dma_heap);
+    if (opt.zero_copy_input) {
+      runner->EnableDirectInput(opt.dma_heap);
+    }
     runner->InitFromContext(yolo_workers[0]->MutableContext(), YoloCoreMask(i));
     yolo_workers.push_back(std::move(runner));
   }
@@ -1543,20 +1764,24 @@ void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
   clip_workers.reserve(opt.clip_threads);
   auto clip_root = std::make_unique<ClipRunner>();
   clip_root->EnableIoMem(opt.use_io_mem);
-  if (opt.zero_copy_input) clip_root->EnableDirectInput(opt.dma_heap);
+  if (opt.zero_copy_input) {
+    clip_root->EnableDirectInput(opt.dma_heap);
+  }
   clip_root->InitFromModel(clip_model, ClipCoreMask(0, opt.clip_core_mode));
   const size_t clip_input_bytes = clip_root->InputAllocationBytes(clip_root->InputBytes());
   clip_workers.push_back(std::move(clip_root));
   for (int i = 1; i < opt.clip_threads; ++i) {
     auto runner = std::make_unique<ClipRunner>();
     runner->EnableIoMem(opt.use_io_mem);
-    if (opt.zero_copy_input) runner->EnableDirectInput(opt.dma_heap);
+    if (opt.zero_copy_input) {
+      runner->EnableDirectInput(opt.dma_heap);
+    }
     runner->InitFromContext(clip_workers[0]->MutableContext(), ClipCoreMask(i, opt.clip_core_mode));
     clip_workers.push_back(std::move(runner));
   }
 
-  ClipSlotPool clip_slots(opt.clip_buffers, clip_input_bytes,
-                         opt.zero_copy_input ? opt.dma_heap : "");
+  ClipSlotPool clip_slots(
+      opt.clip_buffers, clip_input_bytes, opt.zero_copy_input ? opt.dma_heap : "");
   std::vector<std::unique_ptr<ClipPreprocessor>> clip_preprocessors;
   clip_preprocessors.reserve(opt.yolo_threads);
   std::vector<std::unique_ptr<camera_dma::Preprocessor>> hardware_preprocessors;
@@ -1567,101 +1792,119 @@ void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
   std::atomic<int> yolo_alive{opt.yolo_threads};
   std::atomic<int> clip_alive{opt.clip_threads};
 
-  if (camera) camera->Start();
+  if (camera) {
+    camera->Start();
+  }
   const auto wall_start = Clock::now();
   std::thread producer([&]() {
-    failure.Guard([&]() {
-    PinThreadToCore(ProducerCore(opt));
-    if (camera) {
-      ProduceCamera(opt, camera, frame_queue, stats, wall_start, failure);
-      return;
-    }
-    const int total_frames = static_cast<int>(opt.duration_sec * opt.input_fps);
-    const auto interval = std::chrono::duration<double>(1.0 / opt.input_fps);
-    cv::VideoCapture cap;
-    if (!opt.video_path.empty()) {
-      cap = OpenVideo(opt.video_path);
-    }
-    for (int i = 0; i < total_frames && !failure.stopped.load(); ++i) {
-      const auto target_time = wall_start + std::chrono::duration_cast<Clock::duration>(interval * i);
-      std::this_thread::sleep_until(target_time);
-      FrameTask task;
-      task.seq = i;
-      if (!opt.video_path.empty()) {
-        cv::Mat frame;
-        if (!cap.read(frame) || frame.empty()) {
-          cap.release();
-          cap = OpenVideo(opt.video_path);
-          if (!cap.read(frame) || frame.empty()) {
-            throw std::runtime_error("failed to loop video input");
+    failure.Guard(
+        [&]() {
+          PinThreadToCore(ProducerCore(opt));
+          if (camera) {
+            ProduceCamera(opt, camera, frame_queue, stats, wall_start, failure);
+            return;
           }
-        }
-        task.image_index = -1;
-        task.source_name = "video_frame";
-        task.frame = std::make_shared<cv::Mat>(frame.clone());
-      } else {
-        task.image_index = i % static_cast<int>(images.size());
-        task.source_name = Basename(image_paths[task.image_index]);
-        task.frame = std::make_shared<cv::Mat>(images[task.image_index]);
-      }
-      task.capture_time = Clock::now();
-      stats.generated.fetch_add(1);
-      frame_queue.Push(std::move(task), [&](const FrameTask&) { stats.frame_dropped.fetch_add(1); });
-    }
-    }, wake);
+          const int total_frames = static_cast<int>(opt.duration_sec * opt.input_fps);
+          const auto interval = std::chrono::duration<double>(1.0 / opt.input_fps);
+          cv::VideoCapture cap;
+          if (!opt.video_path.empty()) {
+            cap = OpenVideo(opt.video_path);
+          }
+          for (int i = 0; i < total_frames && !failure.stopped.load(); ++i) {
+            const auto target_time =
+                wall_start + std::chrono::duration_cast<Clock::duration>(interval * i);
+            std::this_thread::sleep_until(target_time);
+            FrameTask task;
+            task.seq = i;
+            if (!opt.video_path.empty()) {
+              cv::Mat frame;
+              if (!cap.read(frame) || frame.empty()) {
+                cap.release();
+                cap = OpenVideo(opt.video_path);
+                if (!cap.read(frame) || frame.empty()) {
+                  throw std::runtime_error("failed to loop video input");
+                }
+              }
+              task.image_index = -1;
+              task.source_name = "video_frame";
+              task.frame = std::make_shared<cv::Mat>(frame.clone());
+            } else {
+              task.image_index = i % static_cast<int>(images.size());
+              task.source_name = Basename(image_paths[task.image_index]);
+              task.frame = std::make_shared<cv::Mat>(images[task.image_index]);
+            }
+            task.capture_time = Clock::now();
+            stats.generated.fetch_add(1);
+            frame_queue.Push(std::move(task), [&](const FrameTask&) {
+              stats.frame_dropped.fetch_add(1);
+            });
+          }
+        },
+        wake);
     frame_queue.Close();
   });
 
   std::vector<std::thread> yolo_threads;
   for (int i = 0; i < opt.yolo_threads; ++i) {
     yolo_threads.emplace_back([&, i]() {
-      failure.Guard([&]() {
-      PinThreadToCore(YoloWorkerCore(opt, i));
-      FrameTask task;
-      while (!failure.stopped.load() && frame_queue.Pop(task)) {
-        stats.AddYoloQueueWait(
-            std::chrono::duration<double, std::milli>(Clock::now() - task.capture_time).count());
-        double yolo_pre_ms = 0.0;
-        const YoloResult yolo_result = task.camera_frame ?
-            yolo_workers[i]->RunCamera(*task.camera_frame, *hardware_preprocessors[i],
-                                      opt.yolo_conf_threshold, yolo_pre_ms) :
-            yolo_workers[i]->Run(*task.frame, opt.yolo_conf_threshold, yolo_pre_ms);
-        stats.AddYoloPreprocess(yolo_pre_ms);
-        stats.AddYoloRun(yolo_result.run_ms);
+      failure.Guard(
+          [&]() {
+            PinThreadToCore(YoloWorkerCore(opt, i));
+            FrameTask task;
+            while (!failure.stopped.load() && frame_queue.Pop(task)) {
+              stats.AddYoloQueueWait(
+                  std::chrono::duration<double, std::milli>(Clock::now() - task.capture_time)
+                      .count());
+              double yolo_pre_ms = 0.0;
+              const YoloResult yolo_result =
+                  task.camera_frame
+                      ? yolo_workers[i]->RunCamera(*task.camera_frame,
+                                                   *hardware_preprocessors[i],
+                                                   opt.yolo_conf_threshold,
+                                                   yolo_pre_ms)
+                      : yolo_workers[i]->Run(*task.frame, opt.yolo_conf_threshold, yolo_pre_ms);
+              stats.AddYoloPreprocess(yolo_pre_ms);
+              stats.AddYoloRun(yolo_result.run_ms);
 
-        if (!yolo_result.detected && !opt.fallback_full_image) {
-          stats.skipped_no_object.fetch_add(1);
-          continue;
-        }
+              if (!yolo_result.detected && !opt.fallback_full_image) {
+                stats.skipped_no_object.fetch_add(1);
+                continue;
+              }
 
-        int slot_id = -1;
-        if (!clip_slots.TryAcquire(slot_id)) {
-          stats.clip_slot_dropped.fetch_add(1);
-          continue;
-        }
+              int slot_id = -1;
+              if (!clip_slots.TryAcquire(slot_id)) {
+                stats.clip_slot_dropped.fetch_add(1);
+                continue;
+              }
 
-        double clip_pre_ms = 0.0;
-        auto& slot = clip_slots.Slot(slot_id);
-        PrepareClipTask(task, yolo_result.roi, *clip_preprocessors[i], *hardware_preprocessors[i],
-                        slot.Data(), slot.dma, clip_pre_ms);
-        task.camera_frame.reset();
-        stats.AddClipPreprocess(clip_pre_ms);
-        clip_slots.Slot(slot_id).valid = true;
+              double clip_pre_ms = 0.0;
+              auto& slot = clip_slots.Slot(slot_id);
+              PrepareClipTask(task,
+                              yolo_result.roi,
+                              *clip_preprocessors[i],
+                              *hardware_preprocessors[i],
+                              slot.Data(),
+                              slot.dma,
+                              clip_pre_ms);
+              task.camera_frame.reset();
+              stats.AddClipPreprocess(clip_pre_ms);
+              clip_slots.Slot(slot_id).valid = true;
 
-        ClipTask clip_task;
-        clip_task.seq = task.seq;
-        clip_task.image_index = task.image_index;
-        clip_task.source_name = task.source_name;
-        clip_task.slot_id = slot_id;
-        clip_task.capture_time = task.capture_time;
-        clip_task.enqueue_time = Clock::now();
-        clip_task.detected = yolo_result.detected;
-        clip_queue.Push(std::move(clip_task), [&](const ClipTask& dropped) {
-          clip_slots.Release(dropped.slot_id);
-          stats.clip_queue_dropped.fetch_add(1);
-        });
-      }
-      }, wake);
+              ClipTask clip_task;
+              clip_task.seq = task.seq;
+              clip_task.image_index = task.image_index;
+              clip_task.source_name = task.source_name;
+              clip_task.slot_id = slot_id;
+              clip_task.capture_time = task.capture_time;
+              clip_task.enqueue_time = Clock::now();
+              clip_task.detected = yolo_result.detected;
+              clip_queue.Push(std::move(clip_task), [&](const ClipTask& dropped) {
+                clip_slots.Release(dropped.slot_id);
+                stats.clip_queue_dropped.fetch_add(1);
+              });
+            }
+          },
+          wake);
       if (yolo_alive.fetch_sub(1) == 1) {
         clip_queue.Close();
       }
@@ -1671,37 +1914,51 @@ void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
   std::vector<std::thread> clip_threads;
   for (int i = 0; i < opt.clip_threads; ++i) {
     clip_threads.emplace_back([&, i]() {
-      failure.Guard([&]() {
-      PinThreadToCore(ClipWorkerCore(opt, i));
-      ClipTask task;
-      while (!failure.stopped.load() && clip_queue.Pop(task)) {
-        stats.AddClipQueueWait(
-            std::chrono::duration<double, std::milli>(Clock::now() - task.enqueue_time).count());
-        ClipSlot& slot = clip_slots.Slot(task.slot_id);
-        const ClipResult clip_result = slot.dma ? clip_workers[i]->RunPreparedDma(slot.dma) :
-                                                 clip_workers[i]->RunPrepared(slot.Data());
-        stats.AddClipRun(clip_result.run_ms);
-        const ClassificationResult cls = text_bank.Classify(
-            clip_workers[i]->OutputData(), clip_workers[i]->OutputCount(), opt.topk,
-            opt.reject_threshold);
-        const auto now = Clock::now();
-        const double latency_ms =
-            std::chrono::duration<double, std::milli>(now - task.capture_time).count();
-        stats.AddCompleted(task.detected, latency_ms, clip_result.checksum, task.image_index,
-                           task.source_name, cls);
-        clip_slots.Release(task.slot_id);
-      }
-      }, wake);
+      failure.Guard(
+          [&]() {
+            PinThreadToCore(ClipWorkerCore(opt, i));
+            ClipTask task;
+            while (!failure.stopped.load() && clip_queue.Pop(task)) {
+              stats.AddClipQueueWait(
+                  std::chrono::duration<double, std::milli>(Clock::now() - task.enqueue_time)
+                      .count());
+              ClipSlot& slot = clip_slots.Slot(task.slot_id);
+              const ClipResult clip_result = slot.dma ? clip_workers[i]->RunPreparedDma(slot.dma)
+                                                      : clip_workers[i]->RunPrepared(slot.Data());
+              stats.AddClipRun(clip_result.run_ms);
+              const ClassificationResult cls = text_bank.Classify(clip_workers[i]->OutputData(),
+                                                                  clip_workers[i]->OutputCount(),
+                                                                  opt.topk,
+                                                                  opt.reject_threshold);
+              const auto now = Clock::now();
+              const double latency_ms =
+                  std::chrono::duration<double, std::milli>(now - task.capture_time).count();
+              stats.AddCompleted(task.detected,
+                                 latency_ms,
+                                 clip_result.checksum,
+                                 task.image_index,
+                                 task.source_name,
+                                 cls);
+              clip_slots.Release(task.slot_id);
+            }
+          },
+          wake);
       clip_alive.fetch_sub(1);
     });
   }
 
   producer.join();
-  for (auto& t : yolo_threads) t.join();
-  for (auto& t : clip_threads) t.join();
+  for (auto& t : yolo_threads) {
+    t.join();
+  }
+  for (auto& t : clip_threads) {
+    t.join();
+  }
   failure.Rethrow();
   const auto wall_end = Clock::now();
-  PrintReport(opt, stats, image_paths,
+  PrintReport(opt,
+              stats,
+              image_paths,
               std::chrono::duration<double, std::milli>(wall_end - wall_start).count());
 }
 
@@ -1710,14 +1967,16 @@ void RunPool(const Options& opt, const std::vector<cv::Mat>& images,
 int main(int argc, char** argv) {
   try {
     if (argc >= 2 && std::string(argv[1]) == "--dma-self-test") {
-      if (argc != 2 && !(argc == 4 && std::string(argv[2]) == "--dma-heap"))
+      if (argc != 2 && !(argc == 4 && std::string(argv[2]) == "--dma-heap")) {
         throw std::runtime_error("--dma-self-test [--dma-heap PATH]");
+      }
       camera_dma::SelfTest(argc == 4 ? argv[3] : "/dev/dma_heap/system");
       std::cout << "DMA heap + RGA FD import + color/resize/letterbox/ROI + cache sync: PASS\n";
       return 0;
     }
     const Options opt = ParseArgs(argc, argv);
-    const auto image_paths = opt.image_dir.empty() ? std::vector<std::string>{} : LoadImagePaths(opt.image_dir);
+    const auto image_paths =
+        opt.image_dir.empty() ? std::vector<std::string>{} : LoadImagePaths(opt.image_dir);
     const auto images = opt.image_dir.empty() ? std::vector<cv::Mat>{} : LoadImages(opt.image_dir);
     TextBank text_bank;
     text_bank.Load(opt.label_tsv_path, opt.text_feature_path);
@@ -1730,7 +1989,8 @@ int main(int argc, char** argv) {
       RunPool(opt, images, image_paths, text_bank, yolo_model, clip_model);
     }
     return 0;
-  } catch (const std::exception& ex) {
+  }
+  catch (const std::exception& ex) {
     std::cerr << ex.what() << std::endl;
     return 1;
   }

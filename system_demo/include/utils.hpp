@@ -94,5 +94,4 @@ inline std::string Basename(const std::string& path) {
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
-
 }  // namespace yolo_clip

@@ -64,9 +64,14 @@ struct FrameTask {
 struct ClipSlot {
   std::vector<uint8_t> input_bytes;
   std::shared_ptr<camera_dma::DmaBuffer> dma;
-  uint8_t* Data() { return dma ? static_cast<uint8_t*>(dma->Data()) : input_bytes.data(); }
+
+  uint8_t* Data() {
+    return dma ? static_cast<uint8_t*>(dma->Data()) : input_bytes.data();
+  }
+
   bool valid = false;
 };
+
 using ClipSlotPool = BufferPool<ClipSlot>;
 
 // 已完成 ROI 预处理的分类任务，不再需要整张原图；slot 是不可复制的独占租约。
@@ -113,6 +118,5 @@ struct SamplePrediction {
   double score = 0.0;
   bool is_unknown = false;
 };
-
 
 }  // namespace yolo_clip

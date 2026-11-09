@@ -38,5 +38,6 @@
 #include "rknn_api.h"
 #include "camera_dma.hpp"
 
-
-namespace yolo_clip { using Clock = std::chrono::steady_clock; }
+namespace yolo_clip {
+using Clock = std::chrono::steady_clock;
+}

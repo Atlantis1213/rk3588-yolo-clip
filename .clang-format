@@ -1,0 +1,27 @@
+# 面向阅读的 C++ 格式；使用 clang-format 18 或更新版本。
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++17
+IndentWidth: 2
+ColumnLimit: 100
+BreakStringLiterals: false
+SortIncludes: Never
+ReflowComments: false
+SeparateDefinitionBlocks: Always
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortLambdasOnASingleLine: None
+AllowShortEnumsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+InsertBraces: true
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterControlStatement: Never
+  AfterFunction: false
+  BeforeCatch: true
+  BeforeElse: false
+  SplitEmptyFunction: true
+BinPackArguments: false
+BinPackParameters: false

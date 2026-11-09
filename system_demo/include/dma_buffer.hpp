@@ -23,17 +23,21 @@
 #include <im2d.h>
 #include <rga/im2d_buffer.h>
 
-
 namespace camera_dma {
 // 系统调用被信号中断（EINTR）时重试，其他错误交给调用方判断。
 inline int Ioctl(int fd, unsigned long request, void* arg) {
   int ret;
-  do { ret = ioctl(fd, request, arg); } while (ret < 0 && errno == EINTR);
+  // 先执行一次系统调用；只有被信号中断才重试，设备错误等其他失败交给调用方报告。
+  do {
+    ret = ioctl(fd, request, arg);
+  } while (ret < 0 && errno == EINTR);
   return ret;
 }
 
 inline void Check(bool ok, const std::string& operation) {
-  if (!ok) throw std::runtime_error(operation + ": " + std::strerror(errno));
+  if (!ok) {
+    throw std::runtime_error(operation + ": " + std::strerror(errno));
+  }
 }
 
 // 独占管理一个 DMA heap 分配和映射；禁止复制，防止重复 close/munmap。
@@ -59,20 +63,37 @@ class DmaBuffer {
       throw std::runtime_error("mmap DMA buffer failed");
     }
   }
+
   ~DmaBuffer() {
-    if (address_ != MAP_FAILED) munmap(address_, size_);
-    if (fd_ >= 0) close(fd_);
+    if (address_ != MAP_FAILED) {
+      munmap(address_, size_);
+    }
+    if (fd_ >= 0) {
+      close(fd_);
+    }
   }
+
   DmaBuffer(const DmaBuffer&) = delete;
   DmaBuffer& operator=(const DmaBuffer&) = delete;
-  int Fd() const { return fd_; }
-  void* Data() const { return address_; }
-  size_t Size() const { return size_; }
+
+  int Fd() const {
+    return fd_;
+  }
+
+  void* Data() const {
+    return address_;
+  }
+
+  size_t Size() const {
+    return size_;
+  }
+
   void Sync(uint64_t flags) const {
     dma_buf_sync sync{};
     sync.flags = flags;
     Check(Ioctl(fd_, DMA_BUF_IOCTL_SYNC, &sync) == 0, "DMA_BUF_IOCTL_SYNC");
   }
+
  private:
   int fd_ = -1;
   void* address_ = MAP_FAILED;
@@ -86,19 +107,27 @@ class CpuAccess {
  public:
   CpuAccess(const CpuAccess&) = delete;
   CpuAccess& operator=(const CpuAccess&) = delete;
-  CpuAccess(const DmaBuffer& buffer, uint64_t direction)
-      : buffer_(buffer), direction_(direction) {
+
+  CpuAccess(const DmaBuffer& buffer, uint64_t direction) : buffer_(buffer), direction_(direction) {
     buffer_.Sync(DMA_BUF_SYNC_START | direction_);
   }
+
   ~CpuAccess() {
     if (active_) {
-      try { buffer_.Sync(DMA_BUF_SYNC_END | direction_); } catch (...) {}
+      try {
+        buffer_.Sync(DMA_BUF_SYNC_END | direction_);
+      }
+      catch (...) {
+      }
     }
   }
+
+  // 显式收尾用于正常路径：同步失败可向调用者报告；成功后标记完成，析构不再重复同步。
   void Finish() {
     buffer_.Sync(DMA_BUF_SYNC_END | direction_);
     active_ = false;
   }
+
  private:
   const DmaBuffer& buffer_;
   uint64_t direction_;
@@ -110,20 +139,46 @@ class CpuAccess {
 class DmaImage {
  public:
   DmaImage(const std::string& heap, int width, int height, int format)
-      : width_(width), height_(height), stride_((width + 15) & ~15),
+      : width_(width),
+        height_(height),
+        stride_((width + 15) & ~15),
         buffer_(heap, static_cast<size_t>(stride_) * height * 3) {
     handle_ = importbuffer_fd(buffer_.Fd(), static_cast<int>(buffer_.Size()));
-    if (!handle_) throw std::runtime_error("RGA importbuffer_fd failed for output");
+    if (!handle_) {
+      throw std::runtime_error("RGA importbuffer_fd failed for output");
+    }
     image_ = wrapbuffer_handle(handle_, width, height, format, stride_, height);
   }
-  ~DmaImage() { if (handle_) releasebuffer_handle(handle_); }
+
+  ~DmaImage() {
+    if (handle_) {
+      releasebuffer_handle(handle_);
+    }
+  }
+
   DmaImage(const DmaImage&) = delete;
   DmaImage& operator=(const DmaImage&) = delete;
-  rga_buffer_t Image() const { return image_; }
-  DmaBuffer& Buffer() { return buffer_; }
-  int Width() const { return width_; }
-  int Height() const { return height_; }
-  size_t RowBytes() const { return static_cast<size_t>(stride_) * 3; }
+
+  rga_buffer_t Image() const {
+    return image_;
+  }
+
+  DmaBuffer& Buffer() {
+    return buffer_;
+  }
+
+  int Width() const {
+    return width_;
+  }
+
+  int Height() const {
+    return height_;
+  }
+
+  size_t RowBytes() const {
+    return static_cast<size_t>(stride_) * 3;
+  }
+
  private:
   int width_, height_, stride_;
   DmaBuffer buffer_;
@@ -132,8 +187,9 @@ class DmaImage {
 };
 
 inline void RgaCheck(IM_STATUS status, const char* operation) {
-  if (status != IM_STATUS_SUCCESS && status != IM_STATUS_NOERROR)
+  if (status != IM_STATUS_SUCCESS && status != IM_STATUS_NOERROR) {
     throw std::runtime_error(std::string(operation) + ": " + imStrError(status));
+  }
 }
 
 // 同步 RGA 操作完成后才返回，调用者可据此决定何时释放输入 Frame。
@@ -142,5 +198,4 @@ inline void Blit(rga_buffer_t src, rga_buffer_t dst, im_rect source, im_rect des
   RgaCheck(improcess(src, dst, {}, source, destination, {}, IM_SYNC), "RGA improcess");
 }
 
-
-}
+}  // namespace camera_dma

@@ -7,10 +7,12 @@
 #include <iostream>
 #include <stdexcept>
 #include <utility>
+
 template <typename T>
 class DropOldestQueue {
  public:
-  explicit DropOldestQueue(size_t capacity) : capacity_(capacity) {}
+  explicit DropOldestQueue(size_t capacity) : capacity_(capacity) {
+  }
 
   template <typename DropFn>
   void Push(T item, DropFn on_drop) {
@@ -29,7 +31,9 @@ class DropOldestQueue {
 
   bool Pop(T& item) {
     std::unique_lock<std::mutex> lock(mutex_);
-    cv_.wait(lock, [&] { return closed_ || !queue_.empty(); });
+    cv_.wait(lock, [&] {
+      return closed_ || !queue_.empty();
+    });
     if (queue_.empty()) {
       return false;
     }
@@ -52,18 +56,27 @@ class DropOldestQueue {
   std::queue<T> queue_;
 };
 
-
 __attribute__((noinline)) void ReproduceOriginalClosedQueueLeak() {
   // Original pipeline transferred only an integer slot id, and released via on_drop.
   DropOldestQueue<int> queue(1);
   queue.Close();
   int free_slots = 1;
-  --free_slots; // Original TryAcquire() ownership obligation.
-  queue.Push(0, [&](int) { ++free_slots; });
-  if (free_slots != 1) throw std::runtime_error("original closed Push lost manual slot ownership");
+  --free_slots;  // Original TryAcquire() ownership obligation.
+  queue.Push(0, [&](int) {
+    ++free_slots;
+  });
+  if (free_slots != 1) {
+    throw std::runtime_error("original closed Push lost manual slot ownership");
+  }
 }
+
 int main() {
-  try { ReproduceOriginalClosedQueueLeak(); }
-  catch (const std::exception& error) { std::cerr << error.what() << "\n"; return 1; }
+  try {
+    ReproduceOriginalClosedQueueLeak();
+  }
+  catch (const std::exception& error) {
+    std::cerr << error.what() << "\n";
+    return 1;
+  }
   return 0;
 }

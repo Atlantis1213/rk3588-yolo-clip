@@ -14,7 +14,9 @@ class CameraCpuPreprocessor {
  public:
   cv::Mat Convert(const camera_dma::Frame& frame, double& elapsed_ms) {
     const auto start = Clock::now();
-    if (!frame.data) throw std::runtime_error("CPU camera buffer is not mapped");
+    if (!frame.data) {
+      throw std::runtime_error("CPU camera buffer is not mapped");
+    }
     raw_.resize(frame.bytes);
     dma_buf_sync sync{};
     sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
@@ -36,6 +38,7 @@ class CameraCpuPreprocessor {
     elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     return bgr_;
   }
+
  private:
   std::vector<uint8_t> raw_;
   cv::Mat bgr_;
@@ -91,7 +94,9 @@ inline bool ConvertColorWithRga(const cv::Mat& src, cv::Mat& dst, int src_format
 }
 
 // RGA 写完 RGB 后，CPU 在同步读作用域中归一化；输出地址可直接指向 RKNN 导入的 DMA。
-inline void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool clip,
+inline void PackRgbFp16(camera_dma::DmaImage& rgb,
+                        uint8_t* destination,
+                        bool clip,
                         normalization::Mode mode = normalization::Mode::Scalar) {
   camera_dma::CpuAccess read(rgb.Buffer(), DMA_BUF_SYNC_READ);
   auto* output = reinterpret_cast<uint16_t*>(destination);
@@ -105,9 +110,12 @@ inline void PackRgbFp16(camera_dma::DmaImage& rgb, uint8_t* destination, bool cl
 class ClipPreprocessor {
  public:
   explicit ClipPreprocessor(bool use_rga, normalization::Mode mode = normalization::Mode::Scalar)
-      : use_rga_(use_rga), mode_(mode) {}
+      : use_rga_(use_rga), mode_(mode) {
+  }
 
-  static constexpr size_t InputBytes() { return 1 * 224 * 224 * 3 * sizeof(uint16_t); }
+  static constexpr size_t InputBytes() {
+    return 1 * 224 * 224 * 3 * sizeof(uint16_t);
+  }
 
   void PrepareInput(const cv::Mat& image_bgr, uint8_t* dst_bytes, double& preprocess_ms) {
     const auto prep_start = Clock::now();
@@ -136,8 +144,7 @@ class ClipPreprocessor {
     // 归一化直接写目标张量；按源 step 读行，输出无行 padding。
     normalization::Run(rgb_.data, 224, 224, rgb_.step, dst, true, mode_);
     copy_metrics.Normalized(InputBytes());
-    preprocess_ms =
-        std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
+    preprocess_ms = std::chrono::duration<double, std::milli>(Clock::now() - prep_start).count();
   }
 
  private:
@@ -146,6 +153,5 @@ class ClipPreprocessor {
   cv::Mat resized_;
   cv::Mat rgb_;
 };
-
 
 }  // namespace yolo_clip
