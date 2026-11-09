@@ -582,6 +582,8 @@ void RunPool(const Options& opt,
 
   std::vector<std::thread> yolo_threads;
   for (int i = 0; i < opt.yolo_threads; ++i) {
+    // i 必须按值捕获：线程启动时外层循环可能已推进到下一个编号。
+    // 模型、预处理器都按同一 i 索引，使一个 context 和一组可变缓存始终只被一个线程使用。
     yolo_threads.emplace_back([&, i]() {
       failure.Guard(
           [&]() {
@@ -604,6 +606,7 @@ void RunPool(const Options& opt,
               // 无有效检测时可跳过分类；开启 fallback 后使用 YoloResult 提供的整图 ROI。
               if (!yolo_result.detected && !opt.fallback_full_image) {
                 stats.skipped_no_object.fetch_add(1);
+                // 这里没有借用 CLIP 输入槽；原始帧由 task 的共享引用在覆盖或析构时归还。
                 continue;
               }
 
@@ -611,11 +614,14 @@ void RunPool(const Options& opt,
               auto lease = clip_slots.TryAcquire();
               if (!lease) {
                 stats.clip_slot_dropped.fetch_add(1);
+                // TryAcquire 非阻塞失败，不占有任何槽位，因此此分支无需手动归还输入缓冲。
                 continue;
               }
 
               double clip_pre_ms = 0.0;
               auto& slot = lease.Get();
+              // 本线程持有独占租约，归一化期间 CLIP worker 不会读到这个尚未完成的输入。
+              // PrepareClipTask 正常返回并入队后，队列锁负责把已写数据发布给消费线程。
               PrepareClipTask(task,
                               yolo_result.roi,
                               *clip_preprocessors[i],
@@ -654,6 +660,7 @@ void RunPool(const Options& opt,
 
   std::vector<std::thread> clip_threads;
   for (int i = 0; i < opt.clip_threads; ++i) {
+    // CLIP 线程只消费预处理后的张量；不再持有原始 ROI 图像，也不会再次运行 YOLO。
     clip_threads.emplace_back([&, i]() {
       failure.Guard(
           [&]() {
@@ -667,6 +674,8 @@ void RunPool(const Options& opt,
               const ClipResult clip_result = slot.dma ? clip_workers[i]->RunPreparedDma(slot.dma)
                                                       : clip_workers[i]->RunPrepared(slot.Data());
               stats.AddClipRun(clip_result.run_ms, clip_result.gate_wait_ms);
+              // OutputData 指向当前 runner 可复用的输出数组；必须在下一次推理覆盖前完成分类。
+              // Classify 会复制并归一化 embedding，Stats 保存的是标签/分数值，不保存这个指针。
               const ClassificationResult cls = text_bank.Classify(clip_workers[i]->OutputData(),
                                                                   clip_workers[i]->OutputCount(),
                                                                   opt.topk,

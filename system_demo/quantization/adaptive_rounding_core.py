@@ -9,34 +9,43 @@ from torch import nn
 class AdaptiveRounding(nn.Module):
     def __init__(self, weight, scale, zero):
         super().__init__()
+        # scale/zero 从 [out] 变为 [out,1]，按输出通道广播到整行权重，而非每个元素单独学习。
         scale = torch.as_tensor(scale, dtype=weight.dtype, device=weight.device).reshape(-1, 1)
         zero = torch.as_tensor(zero, dtype=weight.dtype, device=weight.device).reshape(-1, 1)
         if weight.ndim != 2 or scale.shape[0] != weight.shape[0] or zero.shape != scale.shape:
             raise ValueError("per-output channel dimensions differ")
-        if not torch.isfinite(weight).all() or not torch.isfinite(scale).all() or (scale <= 0).any():
+        if (
+            not torch.isfinite(weight).all()
+            or not torch.isfinite(scale).all()
+            or (scale <= 0).any()
+        ):
             raise ValueError("finite weights and positive scales required")
         if not torch.isfinite(zero).all() or (zero != zero.round()).any():
             raise ValueError("finite integer zero points required")
+        # buffer 随模块迁移设备并进入状态字典，但不是优化器更新的 Parameter。
         self.register_buffer("scale", scale)
         self.register_buffer("zero", zero)
+        # 先映射到不含零点的量化网格；整数零点只影响整体平移，不改变向上/向下舍入的小数部分。
         value = weight / scale
         # floor 和量化参数不训练；alpha 通过可导的 hard-sigmoid 控制小数部分。
         self.register_buffer("floor", value.floor())
         remainder = value - value.floor()
         # 将权重原有小数部分反解为 sigmoid 的输入，使初始软舍入尽量还原浮点权重。
-        fraction = ((remainder + .1) / 1.2).clamp(1e-6, 1 - 1e-6)
+        fraction = ((remainder + 0.1) / 1.2).clamp(1e-6, 1 - 1e-6)
         self.alpha = nn.Parameter(torch.logit(fraction))
 
     # 把 sigmoid 拉伸到 [-0.1,1.1] 后截断到 [0,1]，允许训练结果到达两个端点。
     def soft_targets(self):
-        return (self.alpha.sigmoid() * 1.2 - .1).clamp(0, 1)
+        return (self.alpha.sigmoid() * 1.2 - 0.1).clamp(0, 1)
 
     # 训练用连续小数，导出用 alpha 的符号二值化；加零点后限制到有符号 8 位范围。
     def forward(self, hard=False):
         fraction = (self.alpha >= 0).to(self.floor.dtype) if hard else self.soft_targets()
+        # 得到有符号 INT8 范围内的整数（软训练时允许连续代理值），再以 (q-zero)*scale 反量化。
         integers = (self.floor + fraction + self.zero).clamp(-128, 127)
         return (integers - self.zero) * self.scale
 
 
+# 普通最近舍入 QDQ 参考：量化 → 饱和 → 反量化，用于与学习舍入比较；并非训练 alpha 的路径。
 def fixed_quantize(value, scale, zero):
     return ((value / scale).round() + zero).clamp(-128, 127).sub(zero).mul(scale)

@@ -173,6 +173,7 @@ class BaseRunner {
 
  protected:
   void PostInit(rknn_core_mask core_mask) {
+    // 两种初始化方式最终走同一查询流程；属性由实际 RKNN 模型给出，不能仅凭文件名推断。
     core_bits_ = static_cast<uint32_t>(core_mask);
     int ret = rknn_set_core_mask(ctx_, core_mask);
     if (ret != RKNN_SUCC) {
@@ -424,6 +425,7 @@ class YoloRunner : public BaseRunner {
       }
     }
     if (best_idx < 0 || best_conf < conf_threshold) {
+      // 即使未检出也返回合法整图区域；调用方再根据 fallback 选项决定是否继续 CLIP。
       result.detected = false;
       result.roi = cv::Rect(0, 0, width, height);
       return result;
@@ -446,6 +448,7 @@ class YoloRunner : public BaseRunner {
       return result;
     }
 
+    // 浮点框坐标已转换成整数矩形，再与原图边界求交，确保后续 cv::Mat ROI 不越界。
     result.detected = true;
     result.roi = rect & cv::Rect(0, 0, width, height);
     return result;

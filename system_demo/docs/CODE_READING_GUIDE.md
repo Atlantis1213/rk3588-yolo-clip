@@ -95,6 +95,32 @@ DMA-BUF 让设备共享同一缓冲，但 CPU 访问仍需要 `CpuAccess` 的 ST
 实验目录保留多个历史阶段的工具和机器路径。具体候选、模型来源和验收结论应结合
 `MODEL_PROVENANCE.md` 及对应日期实验文档阅读，不能从“转换成功”推断已通过部署验收。
 
+### 关键脚本的输入输出与衔接
+
+以下文件已补充中文步骤注释并展开紧凑 Python 语句，可沿着输入产物流向阅读：
+
+| 关注的问题 | 入口与核心文件 | 主要输出 / 下一步 |
+| --- | --- | --- |
+| 如何准备不重叠的数据 | `prepare_data.py`、`prepare_real_calibration.py` | 校准张量/图片清单、来源哈希；供校准与冻结 ROI 使用 |
+| 为什么选择这些量化范围 | `collect_calibration_stats.py`、`histogram_range_search.py` | 通道分布、直方图、近似 QDQ 误差与范围候选 |
+| 重参数化如何保持浮点输出 | `affine_reparameterization.py`、`export_affine_sweep.py` | LN/Linear 参数折叠、浮点对照、候选 ONNX |
+| 修改权重后如何转换 | `build_affine_candidate.py`、`convert_rknn.py` | 重新校准的 RKNN、转换配置与来源记录 |
+| 学习舍入如何落到实际模型 | `prepare_reconstruction_contract.py` → `reconstruct_rounding.py` → `build_reconstruction_candidate.py` | 固定 SDK 网格、逐层重建参数、回填候选 |
+| 如何限制候选改动范围 | `sdk_ir_validation.py` | 图结构/参数哈希与允许修改的 initializer 清单 |
+| QAT 到底训练了什么 | `qat_visual_core.py`、`train_qat.py` | LN 与可选末端投影的新参数值、代理验证指标 |
+| 板端如何保证输入相同 | `tools/run_real_eval_board.py` | 一次冻结的 ROI/输入哈希、逐模型 embedding 与日志 |
+| 数值变化与识别变化如何区分 | `evaluate_real_200.py`、`tools/evaluate_real_candidate.py`、`numerical_fidelity.py` | 任务指标、数值误差、拒识后类别与细标签一致率 |
+| 非 YOLO 裁剪如何实现 | `tools/green_foreground_crop.py` | 固定绿幕规则的最大前景框及回退原因 |
+
+表中未带目录前缀的 Python 文件都位于 `quantization/`。
+`tools/deploy_qat_pilot.py` 另外说明了历史远程上传、校验、训练启动与收集协议；
+其路径和地址需要按实际环境配置，阅读时无需执行。
+
+`train_qat.py` 保存的 `delta` 字段实际包含所选参数的**完整新值**，不是与原参数相减
+后的差量。恢复时应和匹配 SHA 的原模型合并。`sdk_ir_validation.py` 只验证修改范围，
+不能替代 SDK 的真实转换与板端验收。`evaluate_real_candidate.py` 报告的是冻结 ROI 上
+的条件分类，不能直接当成在线端到端准确率。
+
 ## 6. 用已有测试核对理解
 
 `tests/test_queue_pool.cpp` 检查关闭/丢弃/异常归还、并发任务对账与租约存活期；

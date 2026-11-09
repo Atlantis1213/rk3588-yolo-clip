@@ -25,6 +25,7 @@ class TextBank {
       if (tab == std::string::npos) {
         throw std::runtime_error("invalid label tsv line: " + line);
       }
+      // 左列是细粒度文本标签，右列是部署用粗类别；多条细标签可以映射到同一个粗类别。
       labels_.push_back(line.substr(0, tab));
       categories_.push_back(line.substr(tab + 1));
     }
@@ -47,6 +48,7 @@ class TextBank {
 
     // 文本特征在加载时归一化一次；单位文本特征与单位图像特征点积就是余弦相似度。
     for (size_t row = 0; row < labels_.size(); ++row) {
+      // 二维 [标签数,dim_] 被平铺到 vector；row*dim_ 正好跳到这一标签的特征首元素。
       float* ptr = features_.data() + row * dim_;
       const float norm = L2Norm(ptr, dim_);
       for (size_t i = 0; i < dim_; ++i) {
@@ -67,6 +69,7 @@ class TextBank {
     std::vector<float> normalized(count);
     std::memcpy(normalized.data(), embedding, count * sizeof(float));
     const float norm = L2Norm(normalized.data(), count);
+    // 向量模长不代表类别置信度；先除以模长，只比较图像与文本在共同语义空间中的方向。
     for (size_t i = 0; i < count; ++i) {
       normalized[i] /= norm;
     }
@@ -92,6 +95,7 @@ class TextBank {
     }
     if (k > 0) {
       const int idx = scored[0].second;
+      // 先选择最高分细标签，再读取它的粗类别；此处没有按粗类别聚合多个标签的分数。
       result.top1_label = labels_[idx];
       result.mapped_category = categories_[idx];
       // 拒识阈值作用于最高余弦分数；topk 原始排名保留，便于检查被拒识样本。

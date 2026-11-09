@@ -38,16 +38,31 @@ def main():
     output = root / "runs" / args.run
     output.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
-    info = {"completed": False, "pid": os.getpid(), "steps_per_block": args.steps,
+    info = {
+        "completed": False,
+        "pid": os.getpid(),
+        "steps_per_block": args.steps,
         "scope": "fixed SDK KL120 scales, AdaRound-style MLP down-projection pilot; not full BRECQ or bit-exact NPU QAT",
-        "development_or_locked_test_evaluated": False, "blocks": []}
+        "development_or_locked_test_evaluated": False,
+        "blocks": [],
+    }
+
     def update(phase, **values):
         info.update(phase=phase, elapsed_seconds=time.monotonic() - started, **values)
         temporary = output / "status.tmp"
         temporary.write_text(json.dumps(info, indent=2), encoding="utf-8")
         os.replace(temporary, output / "status.json")
-        print(json.dumps({"phase": phase, "elapsed_seconds": info["elapsed_seconds"],
-            "blocks_completed": len(info["blocks"])}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "phase": phase,
+                    "elapsed_seconds": info["elapsed_seconds"],
+                    "blocks_completed": len(info["blocks"]),
+                }
+            ),
+            flush=True,
+        )
+
     try:
         update("verify")
         if not torch.cuda.is_available():
@@ -56,25 +71,51 @@ def main():
         torch.manual_seed(20261011)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        if sha(root / "assets/ViT-L-14.pt") != "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836":
+        if (
+            sha(root / "assets/ViT-L-14.pt")
+            != "b8cca3fd41ae0c99ba7e8951adf17d267cdb84cd88be6f7c2e0eca1737a03836"
+        ):
             raise RuntimeError("official weight hash differs")
-        if sha(root / "assets/dataset-resized.zip") != "0bf472790f8b20e5c950d5b5012a9d38af0d3392efd65f8ce171334fc16b07c2":
+        if (
+            sha(root / "assets/dataset-resized.zip")
+            != "0bf472790f8b20e5c950d5b5012a9d38af0d3392efd65f8ce171334fc16b07c2"
+        ):
             raise RuntimeError("data archive hash differs")
         sources = json.loads((root / "dataset_provenance.json").read_text())["calibration_sources"]
-        new_sources = [row["source"] for name in ["development", "locked_test"]
-            for row in json.loads((root / ("v2_" + name + "_labels.json")).read_text())["samples"]]
+        new_sources = [
+            row["source"]
+            for name in ["development", "locked_test"]
+            for row in json.loads((root / ("v2_" + name + "_labels.json")).read_text())["samples"]
+        ]
         if len(sources) != 120 or len(set(sources)) != 120 or set(sources) & set(new_sources):
             raise RuntimeError("original calibration/held-out leakage gate failed")
         contract = json.loads((root / "reconstruction_contract_kl120.json").read_text())
-        (output / "provenance.json").write_text(json.dumps({"args": vars(args), "sources": sources,
-            "contract_sha": sha(root / "reconstruction_contract_kl120.json"), "trainer_sha": sha(Path(__file__)),
-            "rounding_core_sha": sha(root / "adaptive_rounding_core.py"), "torch": torch.__version__,
-            "gpu": torch.cuda.get_device_name(), "tokens_per_image": 16,
-            "selection": "all 24 down-projections; no selection on development labels"}, indent=2))
+        (output / "provenance.json").write_text(
+            json.dumps(
+                {
+                    "args": vars(args),
+                    "sources": sources,
+                    "contract_sha": sha(root / "reconstruction_contract_kl120.json"),
+                    "trainer_sha": sha(Path(__file__)),
+                    "rounding_core_sha": sha(root / "adaptive_rounding_core.py"),
+                    "torch": torch.__version__,
+                    "gpu": torch.cuda.get_device_name(),
+                    "tokens_per_image": 16,
+                    "selection": "all 24 down-projections; no selection on development labels",
+                },
+                indent=2,
+            )
+        )
         update("load_teacher")
         checkpoint = torch.jit.load(str(root / "assets/ViT-L-14.pt"), map_location="cpu").eval()
         model = VisionTransformer(224, 14, 1024, 24, 16, 768).float().eval()
-        model.load_state_dict({name[7:]: value for name, value in checkpoint.state_dict().items() if name.startswith("visual.")})
+        model.load_state_dict(
+            {
+                name[7:]: value
+                for name, value in checkpoint.state_dict().items()
+                if name.startswith("visual.")
+            }
+        )
         del checkpoint
         gc.collect()
         model = model.cuda().requires_grad_(False)
@@ -86,9 +127,10 @@ def main():
             # 默认参数 index=index 固定当前层编号，避免 hook 闭包把所有层都写进最后一个缓存。
             def capture(module, inputs, value, index=index):
                 cache[index].append(value.detach().reshape(257, 4096)[token_ids].half().cpu())
+
             hooks.append(block.mlp.gelu.register_forward_hook(capture))
-        mean = np.array([.48145466, .4578275, .40821073], np.float32)
-        std = np.array([.26862954, .26130258, .27577711], np.float32)
+        mean = np.array([0.48145466, 0.4578275, 0.40821073], np.float32)
+        std = np.array([0.26862954, 0.26130258, 0.27577711], np.float32)
         update("calibration_cache")
         with zipfile.ZipFile(root / "assets/dataset-resized.zip") as archive, torch.no_grad():
             for index, name in enumerate(sources):
@@ -96,7 +138,11 @@ def main():
                 if image is None:
                     raise RuntimeError("cannot decode calibration image")
                 rgb = cv2.cvtColor(cv2.resize(image, (224, 224)), cv2.COLOR_BGR2RGB)
-                value = ((rgb.astype(np.float32) / 255 - mean) / std).astype(np.float16).astype(np.float32)
+                value = (
+                    ((rgb.astype(np.float32) / 255 - mean) / std)
+                    .astype(np.float16)
+                    .astype(np.float32)
+                )
                 model(torch.from_numpy(value.transpose(2, 0, 1)[None].copy()).cuda())
                 if (index + 1) % 20 == 0:
                     update("calibration_cache", images_seen=index + 1)
@@ -109,6 +155,7 @@ def main():
             bias = block.mlp.c_proj.bias.detach()
             values = torch.cat(cache[index]).float().cuda()
             cache[index] = []
+            # 从冻结协议取得当前层输出通道网格，激活使用按层网格；二者都不随优化迭代重新估计。
             qp = record["weight"]
             scale = torch.tensor(qp["scale"], device="cuda")[:, None]
             zero = torch.tensor(qp["zero_point"], device="cuda")[:, None]
@@ -116,28 +163,38 @@ def main():
             quantized_input = fixed_quantize(values, ap["scale"][0], ap["zero_point"][0])
             nearest = fixed_quantize(weight, scale, zero)
             with torch.no_grad():
+                # 教师目标用原浮点输入与权重生成；最近舍入基线同时量化输入和权重。
                 target = F.linear(values, weight, bias)
                 nearest_output = F.linear(quantized_input, nearest, bias)
                 nearest_error = F.mse_loss(nearest_output, target).item()
                 nearest_bias = bias + (target - nearest_output).mean(0)
-                nearest_bias_error = F.mse_loss(F.linear(quantized_input, nearest, nearest_bias), target).item()
+                nearest_bias_error = F.mse_loss(
+                    F.linear(quantized_input, nearest, nearest_bias), target
+                ).item()
             rounding = AdaptiveRounding(weight, qp["scale"], qp["zero_point"])
+            # 只更新 rounding.alpha；教师权重、bias 及 SDK scale 均冻结。偏置修正放在硬舍入之后计算。
             optimizer = torch.optim.Adam([rounding.alpha], lr=1e-3)
             for step in range(args.steps):
-                ids = torch.randperm(len(values), device="cuda")[:args.batch_tokens]
+                ids = torch.randperm(len(values), device="cuda")[: args.batch_tokens]
                 optimizer.zero_grad(set_to_none=True)
                 # 在量化输入上重建原浮点线性层输出，而不是只让权重自身逐元素误差最小。
-                reconstruction = F.mse_loss(F.linear(quantized_input[ids], rounding(), bias), target[ids])
+                reconstruction = F.mse_loss(
+                    F.linear(quantized_input[ids], rounding(), bias), target[ids]
+                )
                 # 前 20% 步数只拟合重建；之后逐步改变正则温度，推动软舍入趋向 0/1。
-                progress = max(0., (step / args.steps - .2) / .8)
+                progress = max(0.0, (step / args.steps - 0.2) / 0.8)
                 temperature = 20 - 18 * progress
-                regularizer = 1 - (2 * (rounding.soft_targets() - .5).abs()).pow(temperature)
-                loss = reconstruction / max(nearest_error, 1e-8) + (.1 * regularizer.mean() if progress > 0 else 0.)
+                regularizer = 1 - (2 * (rounding.soft_targets() - 0.5).abs()).pow(temperature)
+                # 用最近舍入误差归一化重建损失，减小不同层误差量级差异；正则推动软目标靠近 0 或 1。
+                loss = reconstruction / max(nearest_error, 1e-8) + (
+                    0.1 * regularizer.mean() if progress > 0 else 0.0
+                )
                 if not torch.isfinite(loss):
                     raise RuntimeError("nonfinite reconstruction loss")
                 loss.backward()
                 optimizer.step()
             with torch.no_grad():
+                # 训练代理是连续值，验收层重建误差必须切换为真正的二值舍入决定，不能只报告 soft loss。
                 hard = rounding(hard=True)
                 after = F.linear(quantized_input, hard, bias)
                 # 逐输出通道取残差均值作为 bias 修正，不改变权重形状或新增部署算子。
@@ -146,14 +203,37 @@ def main():
                 corrected_error = F.mse_loss(after + correction, target).item()
                 changed = (hard != nearest).float().mean().item()
             artifact = output / (f"block{index:02d}.npz")
-            np.savez(artifact, weight=hard.detach().cpu().numpy(), bias=(bias + correction).cpu().numpy(),
-                nearest_corrected_bias=nearest_bias.cpu().numpy(), original_bias=bias.cpu().numpy())
-            info["blocks"].append({"block": index, "nearest_mse": nearest_error,
-                "nearest_bias_corrected_mse": nearest_bias_error, "adaround_mse": hard_error,
-                "adaround_bias_corrected_mse": corrected_error, "rounding_changed_fraction": changed,
-                "artifact_sha": sha(artifact), "rows": len(values)})
+            np.savez(
+                artifact,
+                weight=hard.detach().cpu().numpy(),
+                bias=(bias + correction).cpu().numpy(),
+                nearest_corrected_bias=nearest_bias.cpu().numpy(),
+                original_bias=bias.cpu().numpy(),
+            )
+            info["blocks"].append(
+                {
+                    "block": index,
+                    "nearest_mse": nearest_error,
+                    "nearest_bias_corrected_mse": nearest_bias_error,
+                    "adaround_mse": hard_error,
+                    "adaround_bias_corrected_mse": corrected_error,
+                    "rounding_changed_fraction": changed,
+                    "artifact_sha": sha(artifact),
+                    "rows": len(values),
+                }
+            )
             update("block_completed")
-            del values, quantized_input, target, nearest_output, nearest, rounding, optimizer, hard, after
+            del (
+                values,
+                quantized_input,
+                target,
+                nearest_output,
+                nearest,
+                rounding,
+                optimizer,
+                hard,
+                after,
+            )
             gc.collect()
             torch.cuda.empty_cache()
         update("completed", completed=True)
